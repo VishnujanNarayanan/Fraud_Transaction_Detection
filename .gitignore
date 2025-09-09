@@ -1,0 +1,12 @@
+# Ignore environment
+accredian-env/
+*.env
+
+# Ignore Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Ignore data files
+*.csv
+
+# Ignore models
+*.pkl
