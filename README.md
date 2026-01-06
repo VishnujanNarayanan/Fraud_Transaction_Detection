@@ -1,8 +1,7 @@
-# Fraud Detection Project — Accredian Internship Task
+# Fraud Detection Project 
 
 ## Problem Statement
-The objective of this project is to build a **Fraud Detection System** using machine learning.  
-We are given a dataset that contains transaction details, and the task is to classify whether a transaction is fraudulent or not.
+The objective of this project is to build a **Fraud Detection System** using machine learning.
 
 ---
 
