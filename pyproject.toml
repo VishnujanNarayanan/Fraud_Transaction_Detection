@@ -1,0 +1,26 @@
+[project]
+name = "fraud-transaction-detection"
+version = "0.1.0"
+description = "Fraud scoring over PaySim mobile-money transactions"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# The notebook is the project's narrative document, not application code. Reformatting
+# its cells to satisfy a linter would churn the thing a reader is meant to read; the
+# logic that matters was lifted into src/ precisely so it could be linted and tested.
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
