@@ -38,13 +38,15 @@
            display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
   .verdict.alert{border-color:var(--warn)}
   .verdict.watch{border-color:var(--watch)}
+  .verdict.normal{border-color:var(--line)}
   .verdict.clear{border-color:var(--safe)}
   .score{font:700 2.1rem/1 var(--mono);letter-spacing:-.03em}
   .alert .score{color:var(--warn)} .watch .score{color:var(--watch)}
-  .clear .score{color:var(--safe)}
+  .normal .score{color:var(--fg)} .clear .score{color:var(--safe)}
   .verdict p{margin:0;color:var(--muted);font-size:.9rem;flex:1;min-width:220px}
   .bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px}
   .bar i{display:block;height:100%;background:var(--accent);transition:width .18s ease}
+  .alert .bar i,.verdict.alert+.bar i{background:var(--warn)}
   .presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
   .presets button{padding:7px 13px;border:1px solid var(--line);border-radius:999px;
                   background:var(--bg);color:var(--fg);font-size:.85rem;cursor:pointer}
@@ -495,37 +497,47 @@ function render(){
   // so it is stated as a comparison against ordinary transactions instead, and the
   // wording flips at the halfway mark so the figure shown is never the small side of
   // the split.
-  const riskier = pct !== null && pct >= 50;
-  const magnitude = pct === null ? null : (riskier ? pct : 100 - pct);
-
-  const scoreEl = document.getElementById("score");
-  scoreEl.textContent = pct === null
-    ? (probability * 100).toFixed(1) + "%"
-    : pctText(magnitude) + "%";
-
-  document.getElementById("bar").style.width = (pct === null ? probability * 100 : pct) + "%";
-
-  // Three states, not two. A transaction can sit in the riskiest fraction of the
-  // population and still fall outside a review queue that only takes the top 0.15%,
-  // and painting that green looks like the page has misread it.
-  const box = document.getElementById("verdict");
-  box.className = "verdict " + (alerts ? "alert" : (pct !== null && pct >= 99 ? "watch" : "clear"));
-
+  // Colour, number and wording must agree. Green saying "riskier than 96%" contradicts
+  // itself, so green is reserved for transactions the safer-than phrasing actually fits,
+  // and the band between the median and the review line gets a neutral state of its own
+  // rather than being forced into one of the other two.
   const at = (M.metrics || {}).at_threshold || {};
   const queue = (at.alerts && M.metrics.rows)
     ? (100 * at.alerts / M.metrics.rows).toFixed(2) + "%"
     : null;
+  const line = queue ? `the review line at the top ${queue}` : "the review line";
 
-  const comparison = pct === null ? "This transaction"
-    : riskier ? `Riskier than ${pctText(pct)}% of ordinary transactions`
-              : `Safer than ${pctText(100 - pct)}% of ordinary transactions`;
+  let state, magnitude, sentence;
+  if (pct === null) {
+    state = "normal";
+    magnitude = probability * 100;
+    sentence = "This transaction could not be ranked against the training data.";
+  } else if (alerts) {
+    state = "alert";
+    magnitude = pct;
+    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Flagged — it is `
+             + `inside the top ${queue || "slice"} the model sends for review.`;
+  } else if (pct >= 99) {
+    state = "watch";
+    magnitude = pct;
+    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Not flagged, but `
+             + `close to ${line}.`;
+  } else if (pct >= 50) {
+    state = "normal";
+    magnitude = pct;
+    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Nothing unusual `
+             + `enough to act on, and well below ${line}.`;
+  } else {
+    state = "clear";
+    magnitude = 100 - pct;
+    sentence = `Safer than ${pctText(100 - pct)}% of ordinary transactions. Cleared — `
+             + `this one passes without review.`;
+  }
 
-  document.getElementById("explain").textContent = alerts
-    ? comparison + ". An analyst would review this one"
-      + (queue ? ` — it is inside the top ${queue} the model sends for review.` : ".")
-    : comparison
-      + (queue ? `, and the review queue is only the top ${queue}, so this one is left alone.`
-               : ", which is not unusual enough to review.");
+  document.getElementById("score").textContent = pctText(magnitude) + "%";
+  document.getElementById("bar").style.width = (pct === null ? probability * 100 : pct) + "%";
+  document.getElementById("verdict").className = "verdict " + state;
+  document.getElementById("explain").textContent = sentence;
 
   document.getElementById("rawnote").textContent =
     "Raw model score " + (probability * 100).toFixed(2) + "%, against an alert threshold of "
