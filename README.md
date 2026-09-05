@@ -14,6 +14,8 @@
   <img alt="Jupyter" src="https://img.shields.io/badge/Jupyter-notebook-F37626?logo=jupyter&logoColor=white"/>
   <img alt="License" src="https://img.shields.io/badge/License-MIT-750014"/>
   <br>
+  <a href="https://vishnujannarayanan.github.io/Fraud_Transaction_Detection/"><img alt="Live demo" src="https://img.shields.io/badge/Live_demo-score_a_transaction-127f4b?logo=githubpages&logoColor=white&style=for-the-badge"/></a>
+  <br>
   <a href="https://www.kaggle.com/datasets/ealaxi/paysim1"><img alt="Dataset on Kaggle" src="https://img.shields.io/badge/Dataset-PaySim_on_Kaggle-20BEFF?logo=kaggle&logoColor=white&style=for-the-badge"/></a>
   <br>
   <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
@@ -23,16 +25,34 @@
 </p>
 
 <p align="center">
+  ▶️ <a href="#live-demo">Demo</a> ·
   🎯 <a href="#why-this-project-exists">Why</a> ·
   🧩 <a href="#architecture">Architecture</a> ·
   📊 <a href="#results">Results</a> ·
   🧠 <a href="#design-decisions">Design Decisions</a> ·
   ⚡ <a href="#installation">Installation</a> ·
   🔍 <a href="#findings">Findings</a> ·
+  🧪 <a href="#testing-and-ci">Testing</a> ·
   ⚠️ <a href="#limitations">Limitations</a>
 </p>
 
 ---
+
+## Live demo
+
+**[vishnujannarayanan.github.io/Fraud_Transaction_Detection](https://vishnujannarayanan.github.io/Fraud_Transaction_Detection/)**
+
+Enter a transaction and see it scored, with the five features that drove the score.
+
+The model runs **in your browser**. The page ships the fitted coefficients, the scaler
+moments and the one-hot categories as a few kilobytes of JSON, and reimplements
+`FraudPreprocessor.transform` plus the sigmoid in JavaScript. There is no server, so there
+is no cold start — a hosted free tier would sleep and make the first visitor wait the better
+part of a minute.
+
+Reimplementing a model in a second language is how a demo comes to confidently disagree with
+the model it claims to be, so `tests/test_browser_parity.py` extracts the page's real script,
+runs it in Node, and asserts it matches scikit-learn to 1e-9 on live rows.
 
 ## Why this project exists
 
@@ -63,6 +83,15 @@ the performance comes from engineered features versus raw columns.
 - **Hypothesis testing** — chi-square for type-vs-fraud independence, Mann–Whitney U for the
   amount distribution.
 - **Three model variants** compared on identical splits.
+- **SQL analytics layer** — the EDA aggregations expressed as nine named queries against
+  SQLite, so they are checkable by anyone who reads SQL and do not pull 6.36M rows into memory.
+- **Honest metrics** — average precision alongside ROC-AUC, a precision/recall/alert-volume
+  threshold sweep, and an F-beta operating point that weights recall over precision.
+- **A real pipeline** — `src.train` persists the model, preprocessor, column order, metrics
+  and ranked coefficients; `src.predict` scores a CSV with them.
+- **61 tests and CI** — ruff and pytest on every push and pull request, plus a Docker image
+  that CI builds and runs.
+- **A browser demo** that loads instantly and needs no server.
 
 ## Architecture
 
@@ -161,9 +190,22 @@ and the 6.36M-row dataset never needs duplicating in memory.
 
 ```
 Fraud_Transaction_Detection/
-├── Fraud_Detection_Model.ipynb   # EDA, FraudPreprocessor, hypothesis tests, three models
+├── Fraud_Detection_Model.ipynb   # EDA, hypothesis tests, three models — the narrative
+├── src/
+│   ├── preprocessor.py           # FraudPreprocessor, the transformer the notebook defined
+│   ├── db.py                     # CSV -> SQLite loader and named-query runner
+│   ├── queries.sql               # Nine analytics queries, each documented
+│   ├── train.py                  # Fit, evaluate, persist every artifact
+│   ├── evaluate.py               # Average precision, threshold sweep, F-beta operating point
+│   ├── predict.py                # Score a CSV with the persisted artifacts
+│   └── export_web.py             # Export the model to JSON for the browser demo
+├── tests/                        # 61 tests over synthetic PaySim-shaped fixtures
+├── docs/                         # The static demo served by GitHub Pages
+├── .github/workflows/            # ci.yml (lint, test, docker) and pages.yml (deploy)
+├── Dockerfile
 ├── Data Dictionary.txt           # Column definitions from the dataset authors
-├── requirements.txt
+├── requirements.txt              # Runtime dependencies
+├── requirements-dev.txt          # Adds pytest and ruff
 └── README.md
 ```
 
@@ -202,12 +244,43 @@ unzip paysim1.zip
 
 ## Usage
 
+The notebook is the narrative; the command line is the pipeline.
+
+**Train and persist everything:**
+
+```bash
+python -m src.train              # add --reduced to drop the weak features
+```
+
+Writes `artifacts/`: the fitted preprocessor, the model, the column order, the metrics and the
+coefficients ranked by absolute weight.
+
+**Score new transactions:**
+
+```bash
+python -m src.predict incoming.csv --out scored.csv --alerts-only
+```
+
+Defaults to the threshold chosen at training time, overridable with `--threshold`.
+
+**Run the SQL analytics:**
+
+```bash
+python -m src.db --build         # load Fraud.csv into artifacts/fraud.db, then run every query
+python -m src.db --query fraud_by_type
+```
+
+**Publish the browser demo:**
+
+```bash
+python -m src.export_web         # writes docs/model.json
+```
+
+**Or read it as a notebook:**
+
 ```bash
 jupyter notebook Fraud_Detection_Model.ipynb
 ```
-
-Run top to bottom. The notebook fits the preprocessor, writes `fraud_preprocessor.pkl`, trains
-the three variants, and prints a classification report and ROC-AUC for each.
 
 To reuse the fitted preprocessing on new data:
 
@@ -286,6 +359,42 @@ so these confirm direction rather than importance — the effect sizes in
 | `matplotlib` / `seaborn` | EDA plots |
 | `joblib` | Persisting the fitted preprocessor |
 
+## Testing and CI
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+ruff check .
+```
+
+61 tests, running in about a second. `Fraud.csv` is a 470 MB gitignored download that CI can
+never see, so every test builds its own PaySim-shaped frame — which also pins the column
+contract the preprocessor depends on.
+
+The tests worth knowing about:
+
+| Test | Why it exists |
+|---|---|
+| Column stability across disjoint batches | A drifting column set desynchronises the coefficient vector and turns a working model into silent garbage |
+| Scaler fitted on train only | The leakage this whole design is meant to prevent |
+| SQL `suspicious_flag` matches the preprocessor's | The same concept written twice in two languages, which is exactly what drifts |
+| `fraud_by_type` SQL equals the pandas groupby | If they disagree, one of them is wrong |
+| ROC-AUC reads higher than average precision | If this fails, the argument for changing the headline metric no longer holds |
+| Page JavaScript matches scikit-learn to 1e-9 | The deployed demo cannot silently disagree with the model |
+
+### Docker
+
+```bash
+docker build -t fraud-detection .
+docker run --rm fraud-detection                    # runs the test suite
+docker run --rm -v "$PWD":/data fraud-detection \
+  python -m src.train --csv /data/Fraud.csv
+```
+
+The image is pinned to the Python version CI runs, and CI builds and runs it on every pull
+request — so the container is verified as a working environment, not merely as a layer that
+built.
+
 ## Limitations
 
 - **The three model variants are not actually three experiments.** The engineered and
@@ -293,31 +402,38 @@ so these confirm direction rather than importance — the effect sizes in
 - **Only logistic regression is trained.** `RandomForestClassifier`, `XGBClassifier`, and
   `IsolationForest` are imported at the top of the notebook but never fitted. Any claim of a
   tree-based or unsupervised comparison in earlier versions of this document was unsupported.
-- **`xgboost` is imported but absent from `requirements.txt`**, so the import cell fails on a
-  clean install.
+- **`xgboost` is imported by the notebook but absent from `requirements.txt`**, so that import
+  cell fails on a clean install. The extracted package in `src/` does not import it at all.
 - **`day_of_week` is misnamed.** It computes `step % 168`, which is the hour-of-week (0–167), not
   a weekday index. Its coefficient is a near-zero −0.027, so it does no harm — but it does not
   mean what the name says.
-- **ROC-AUC is the headline metric, and it is the wrong one here.** At 0.129% positives, ROC-AUC
-  is dominated by the 1.27M easy negatives. Average precision is the honest measure and is not
-  computed in this notebook.
+- **ROC-AUC is the wrong headline metric here.** At 0.129% positives it is dominated by the
+  1.27M easy negatives. The notebook still reports it alone; `src/evaluate.py` reports average
+  precision alongside it, which is the honest measure.
 - **Precision of 0.037 is not deployable as a hard classifier.** It is usable only as a scoring
-  and triage layer.
-- **The trained models are not persisted** — only the preprocessor is.
-- **No threshold tuning.** Everything is reported at the default 0.50 cutoff.
+  and triage layer, which is why `src/predict.py` emits a score and an alert flag rather than a
+  verdict.
+- **The operating threshold is a business decision this repo cannot make.** `pick_threshold`
+  defaults to F-beta with beta=2, weighting recall twice as heavily as precision on the
+  assumption that a missed fraud costs the transfer while a false alert costs a few minutes of
+  an analyst's time. Real costs should replace that assumption.
 - **PaySim is simulated.** Rules that hold in an agent-based simulation, such as fraud never
   appearing in three of five channels, should not be assumed to hold in production data.
 
 ## Roadmap
 
-- Add average precision and precision-recall curves alongside ROC-AUC.
-- Actually fit the imported tree-based and unsupervised models, or remove the imports.
-- Add `xgboost` to `requirements.txt`.
+Done since the first version: average precision and a threshold sweep, model persistence, a
+`FraudPreprocessor` test suite, a SQL analytics layer, a Docker image, CI, and a browser demo.
+
+Still open:
+
+- Fit the imported tree-based and unsupervised models, or remove the imports from the notebook.
 - Rename `day_of_week` to `hour_of_week`, or compute `(step // 24) % 7`.
-- Drop `error_flag` and `always_nonfraud_type`, both provably zero-coefficient.
-- Persist the trained models next to the preprocessor.
-- Sweep the decision threshold and report the precision/recall trade-off explicitly.
-- Unit-test `FraudPreprocessor` for column stability.
+- Drop `error_flag` and `always_nonfraud_type` from the feature set. Both are provably
+  zero-coefficient; they are kept for now so a model trained by `src.train` matches one trained
+  in the notebook column for column.
+- Calibrate the scores, so a 0.8 means something closer to an 80% chance of fraud.
+- Backfill a precision-recall curve into the demo page.
 
 ## License
 
