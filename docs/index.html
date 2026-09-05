@@ -38,11 +38,10 @@
            display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
   .verdict.alert{border-color:var(--warn)}
   .verdict.watch{border-color:var(--watch)}
-  .verdict.normal{border-color:var(--line)}
   .verdict.clear{border-color:var(--safe)}
-  .score{font:700 2.1rem/1 var(--mono);letter-spacing:-.03em}
+  .score{font:700 1.45rem/1.15 var(--mono);letter-spacing:.06em;white-space:nowrap}
   .alert .score{color:var(--warn)} .watch .score{color:var(--watch)}
-  .normal .score{color:var(--fg)} .clear .score{color:var(--safe)}
+  .clear .score{color:var(--safe)}
   .verdict p{margin:0;color:var(--muted);font-size:.9rem;flex:1;min-width:220px}
   .bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px}
   .bar i{display:block;height:100%;background:var(--accent);transition:width .18s ease}
@@ -165,6 +164,7 @@
         <p id="explain"></p>
       </div>
       <div class="bar"><i id="bar" style="width:0%"></i></div>
+      <p class="note" id="ranking"></p>
       <p class="note" id="rawnote"></p>
       <div id="rangewarn" class="rangewarn" hidden></div>
       <div id="context" class="contextbox" hidden></div>
@@ -507,42 +507,53 @@ function render(){
     : null;
   const line = queue ? `the review line at the top ${queue}` : "the review line";
 
-  let state, magnitude, sentence;
-  if (pct === null) {
-    state = "normal";
-    magnitude = probability * 100;
-    sentence = "This transaction could not be ranked against the training data.";
-  } else if (alerts) {
+  // The headline is the DECISION, not a number. A percentage as the headline had to
+  // mean "riskier" above the median and "safer" below it, which put a green box and the
+  // word riskier side by side and made the two disagree. A verdict word cannot
+  // contradict its own colour, and the figures follow underneath as context.
+  const thresholdPct = pctText(M.threshold * 100);
+  // Two decimals throughout, so the raw score does not render as a bare "1%" beside a
+  // threshold quoted to a hundredth.
+  const rawPct = (probability * 100).toFixed(2);
+
+  let state, word, sentence;
+  if (alerts) {
     state = "alert";
-    magnitude = pct;
-    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Flagged — it is `
-             + `inside the top ${queue || "slice"} the model sends for review.`;
-  } else if (pct >= 99) {
+    word = "FLAGGED";
+    sentence = `Its fraud score of ${rawPct}% is at or above the ${thresholdPct}% `
+             + `threshold — an analyst would review this one.`;
+  } else if (pct !== null && pct >= 99) {
     state = "watch";
-    magnitude = pct;
-    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Not flagged, but `
-             + `close to ${line}.`;
-  } else if (pct >= 50) {
-    state = "normal";
-    magnitude = pct;
-    sentence = `Riskier than ${pctText(pct)}% of ordinary transactions. Nothing unusual `
-             + `enough to act on, and well below ${line}.`;
+    word = "CLEARED";
+    sentence = `Passes without review, but only just — its fraud score of ${rawPct}% `
+             + `sits close to the ${thresholdPct}% threshold.`;
   } else {
     state = "clear";
-    magnitude = 100 - pct;
-    sentence = `Safer than ${pctText(100 - pct)}% of ordinary transactions. Cleared — `
-             + `this one passes without review.`;
+    word = "CLEARED";
+    sentence = `Passes without review — its fraud score of ${rawPct}% is well below the `
+             + `${thresholdPct}% threshold.`;
   }
 
-  document.getElementById("score").textContent = pctText(magnitude) + "%";
+  // "Still routine" is true below the 99th percentile and plainly false above it, so
+  // the qualifier follows the same band the colour does.
+  const qualifier = alerts ? "." : (state === "watch" ? ", which is unusually high." : ", which is routine.");
+  const ranking = pct === null
+    ? "This transaction could not be ranked against the training data."
+    : (pct >= 50
+        ? `Ranked riskier than ${pctText(pct)}% of ordinary transactions` + qualifier
+        : `Ranked safer than ${pctText(100 - pct)}% of ordinary transactions.`)
+      + (queue ? ` Only the top ${queue} are sent for review.` : "");
+
+  document.getElementById("score").textContent = word;
   document.getElementById("bar").style.width = (pct === null ? probability * 100 : pct) + "%";
   document.getElementById("verdict").className = "verdict " + state;
   document.getElementById("explain").textContent = sentence;
+  document.getElementById("ranking").textContent = ranking;
 
   document.getElementById("rawnote").textContent =
-    "Raw model score " + (probability * 100).toFixed(2) + "%, against an alert threshold of "
-    + (M.threshold * 100).toFixed(2) + "%. The score is a risk ranking, not a probability: "
-    + "fraud is weighted about 775 to 1 during training, which pushes every score upward.";
+    "The score is a risk ranking rather than a probability: fraud is weighted about 775 "
+    + "to 1 during training, which pushes every score upward. That is why the threshold "
+    + "sits at " + thresholdPct + "% instead of somewhere near half.";
 
   const top = contributions.slice(0, 5);
   const widest = Math.max(...top.map(c => Math.abs(c.contribution))) || 1;
