@@ -52,6 +52,20 @@
   td.num{font-family:var(--mono);text-align:right}
   .scroll{overflow-x:auto}
   .note{color:var(--muted);font-size:.87rem}
+  .reasons{display:flex;flex-direction:column;gap:10px}
+  .reason{display:grid;grid-template-columns:1fr 84px;gap:12px;align-items:center;
+          padding:11px 14px;border:1px solid var(--line);border-radius:9px}
+  .reason b{font-weight:600;font-size:.94rem}
+  .reason .dir{font-size:.78rem;color:var(--muted);display:block;margin-top:2px}
+  .reason .weight{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+  .reason .weight i{display:block;height:100%}
+  .up .weight i{background:var(--warn)} .down .weight i{background:var(--safe)}
+  .up b::before{content:"▲ ";color:var(--warn);font-size:.8em}
+  .down b::before{content:"▼ ";color:var(--safe);font-size:.8em}
+  .perfrow{padding:13px 0;border-bottom:1px solid var(--line)}
+  .perfrow:last-child{border-bottom:0}
+  .perfrow strong{display:block;font-size:.95rem;margin-bottom:3px}
+  .perfrow span{color:var(--muted);font-size:.88rem}
   footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);
          color:var(--muted);font-size:.85rem}
   .warnbox{border:1px solid var(--warn);border-radius:10px;padding:16px 18px;margin-bottom:24px}
@@ -118,28 +132,19 @@
         <p id="explain"></p>
       </div>
       <div class="bar"><i id="bar" style="width:0%"></i></div>
+      <p class="note" id="rawnote"></p>
     </div>
 
-    <h2>Why it scored that way</h2>
+    <h2>What drove this score</h2>
     <p class="note">
-      The five features contributing most to this particular score, largest effect first.
-      Each is the fitted coefficient multiplied by this transaction's value for that feature.
+      The five things that moved this transaction most, strongest first. Bar length is
+      relative weight within this transaction — not a percentage.
     </p>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Feature</th><th class="num">Contribution</th></tr></thead>
-        <tbody id="contrib"></tbody>
-      </table>
-    </div>
+    <div id="contrib" class="reasons"></div>
 
     <h2>How the model performs</h2>
     <p class="note" id="metrics-note"></p>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Metric</th><th class="num">Value</th><th>What it means</th></tr></thead>
-        <tbody id="metrics"></tbody>
-      </table>
-    </div>
+    <div id="perf"></div>
   </div>
 
   <footer>
@@ -169,12 +174,34 @@ const PRESETS = {
 const FIELDS = ["step","amount","oldbalanceOrg","newbalanceOrig",
                 "oldbalanceDest","newbalanceDest"];
 
-const METRIC_COPY = {
-  average_precision: "Area under the precision-recall curve. The honest summary on data this imbalanced.",
-  roc_auc: "Reads high because 99.87% of rows are easy negatives. Kept for comparison only.",
-  precision: "Share of alerts that are genuine fraud, at the chosen threshold.",
-  recall: "Share of real fraud the model catches, at the chosen threshold."
+// Model feature names are not English. A recruiter reading "type_CASH_OUT" or
+// "hour_sin" learns nothing, so each is mapped to what it actually means.
+const FEATURE_LABELS = {
+  step: "When in the month it happened",
+  amount: "Transaction amount",
+  log_amount: "Transaction size",
+  oldbalanceOrg: "Sender's balance beforehand",
+  oldbalanceDest: "Recipient's balance beforehand",
+  newbalanceDest: "Recipient's balance afterwards",
+  diff_orig: "Money that left the sender",
+  diff_dest: "Money that reached the recipient",
+  hour: "Hour of day",
+  day_of_week: "Hour of the week",
+  hour_sin: "Time of day",
+  hour_cos: "Time of day",
+  suspicious_flag: "Recipient's balance never moved",
+  error_flag: "Impossible balance on the account",
+  always_nonfraud_type: "Channel fraud never uses",
+  type_CASH_OUT: "Paid out as cash",
+  type_TRANSFER: "Sent as a transfer",
+  type_PAYMENT: "Ordinary payment",
+  type_DEBIT: "Direct debit",
+  type_CASH_IN: "Cash paid in"
 };
+
+function label(name){
+  return FEATURE_LABELS[name] || name.replace(/^type_/, "Channel: ").replace(/_/g, " ");
+}
 
 function sigmoid(z){
   // Branch the same way the Python does, so neither side overflows.
@@ -230,6 +257,21 @@ function score(row){
   return {probability: sigmoid(z), contributions};
 }
 
+function percentileOf(probability){
+  // Where this score sits among LEGITIMATE transactions in the held-out data.
+  // class_weight="balanced" upweights fraud roughly 775:1, so the raw score is a risk
+  // ranking rather than a probability -- 0.977 sounds alarming but is beaten by 0.22%
+  // of perfectly ordinary transactions. This is the number a person can actually read.
+  const q = M.legitimate_quantiles;
+  if (!q || !q.values || !q.values.length) return null;
+  let lo = 0, hi = q.values.length - 1, best = 0;
+  while (lo <= hi){
+    const mid = (lo + hi) >> 1;
+    if (q.values[mid] <= probability){ best = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return q.percentiles[best];
+}
+
 function readForm(){
   const row = {type: document.getElementById("type").value};
   for (const id of FIELDS) row[id] = parseFloat(document.getElementById(id).value) || 0;
@@ -239,21 +281,49 @@ function readForm(){
 function render(){
   const {probability, contributions} = score(readForm());
   const alerts = probability >= M.threshold;
-  const percent = (probability * 100);
+  const pct = percentileOf(probability);
 
-  document.getElementById("score").textContent =
-    percent < 1 ? percent.toFixed(2) + "%" : percent.toFixed(1) + "%";
-  document.getElementById("bar").style.width = Math.min(100, percent) + "%";
+  // The headline is the percentile, not the raw score. "Riskier than 99.8% of ordinary
+  // transactions" is a sentence anyone can act on; "97.7%" is not.
+  const scoreEl = document.getElementById("score");
+  scoreEl.textContent = pct === null
+    ? (probability * 100).toFixed(1) + "%"
+    : (pct >= 99.95 ? "top 0.05%" : "top " + (100 - pct).toFixed(pct >= 99 ? 2 : 0) + "%");
+
+  document.getElementById("bar").style.width = (pct === null ? probability * 100 : pct) + "%";
 
   const box = document.getElementById("verdict");
   box.className = "verdict " + (alerts ? "alert" : "clear");
-  document.getElementById("explain").textContent = alerts
-    ? `Above the ${(M.threshold * 100).toFixed(1)}% alert threshold — this transaction would go to an analyst.`
-    : `Below the ${(M.threshold * 100).toFixed(1)}% alert threshold — this transaction would pass without review.`;
 
-  document.getElementById("contrib").innerHTML = contributions.slice(0, 5).map(c =>
-    `<tr><td>${c.name}</td><td class="num">${c.contribution >= 0 ? "+" : ""}${c.contribution.toFixed(3)}</td></tr>`
-  ).join("");
+  // Saying "top 0.25%" and then "passes" looks broken until you say how small the
+  // review queue is. The queue is the top 0.15%, so 0.25% genuinely sits outside it.
+  const at = (M.metrics || {}).at_threshold || {};
+  const queue = (at.alerts && M.metrics.rows)
+    ? (100 * at.alerts / M.metrics.rows).toFixed(2) + "%"
+    : null;
+  document.getElementById("explain").textContent = alerts
+    ? "Riskier than " + pct + "% of ordinary transactions. An analyst would review this one"
+      + (queue ? " — it is inside the top " + queue + " the model sends for review." : ".")
+    : "Riskier than " + pct + "% of ordinary transactions"
+      + (queue ? ", but the review queue is only the top " + queue + ", so this one is left alone."
+               : ", which is not unusual enough to review.");
+
+  document.getElementById("rawnote").textContent =
+    "Raw model score " + (probability * 100).toFixed(2) + "%, against an alert threshold of "
+    + (M.threshold * 100).toFixed(2) + "%. The score is a risk ranking, not a probability: "
+    + "fraud is weighted about 775 to 1 during training, which pushes every score upward.";
+
+  const top = contributions.slice(0, 5);
+  const widest = Math.max(...top.map(c => Math.abs(c.contribution))) || 1;
+  document.getElementById("contrib").innerHTML = top.map(c => {
+    const up = c.contribution >= 0;
+    const width = (Math.abs(c.contribution) / widest) * 100;
+    return `<div class="reason ${up ? "up" : "down"}">
+      <span><b>${label(c.name)}</b>
+        <span class="dir">${up ? "raises" : "lowers"} the risk score</span></span>
+      <span class="weight"><i style="width:${width}%"></i></span>
+    </div>`;
+  }).join("");
 }
 
 function applyPreset(name){
@@ -265,14 +335,40 @@ function applyPreset(name){
 
 function renderMetrics(){
   const m = M.metrics || {};
-  const rows = Object.keys(METRIC_COPY)
-    .filter(k => k in m)
-    .map(k => `<tr><td>${k.replace(/_/g, " ")}</td><td class="num">${(+m[k]).toFixed(4)}</td><td class="note">${METRIC_COPY[k]}</td></tr>`);
-  document.getElementById("metrics").innerHTML = rows.join("");
-  if (m.rows && m.positives){
-    document.getElementById("metrics-note").textContent =
-      `Measured on a held-out split of ${(+m.rows).toLocaleString()} transactions, of which ${(+m.positives).toLocaleString()} were fraudulent.`;
+  const at = m.at_threshold || {};
+  const pct = x => (x * 100).toFixed(1) + "%";
+  const n = x => (+x).toLocaleString();
+  const rows = [];
+
+  if (at.alerts != null && at.precision != null){
+    rows.push([
+      `Of every 100 transactions it flags, about ${Math.round(at.precision * 100)} really are fraud.`,
+      `It raised ${n(at.alerts)} alerts on ${n(m.rows)} transactions — a queue a small team can actually work through.`
+    ]);
   }
+  if (at.recall != null){
+    rows.push([
+      `It catches roughly ${Math.round(at.recall * 100)} of every 100 frauds.`,
+      `The rest slip through. Lowering the alert threshold catches more of them, at the cost of far more false alarms.`
+    ]);
+  }
+  if (m.average_precision != null){
+    rows.push([
+      `Average precision ${(+m.average_precision).toFixed(3)} — the honest headline.`,
+      `Its ROC-AUC of ${(+m.roc_auc).toFixed(3)} looks far better, but only because 99.87% of transactions are obviously fine. Average precision does not get that free credit.`
+    ]);
+  }
+  rows.push([
+    "Fraud is rare, which is the whole difficulty.",
+    `Only ${n(m.positives)} of ${n(m.rows)} held-out transactions were fraudulent. A model that simply answered "never fraud" would be 99.87% accurate and completely useless.`
+  ]);
+
+  document.getElementById("perf").innerHTML = rows
+    .map(([head, body]) => `<div class="perfrow"><strong>${head}</strong><span>${body}</span></div>`)
+    .join("");
+  document.getElementById("metrics-note").textContent =
+    `Measured on ${n(m.rows)} held-out transactions the model never saw during training.`;
+  void pct;
 }
 
 fetch("model.json")

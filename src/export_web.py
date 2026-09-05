@@ -54,9 +54,20 @@ def export(artifacts: Path = ARTIFACTS, out: Path = DEFAULT_OUT) -> dict:
         "threshold": float(metrics.get("threshold", 0.5)),
         "metrics": {
             key: metrics[key]
-            for key in ("average_precision", "roc_auc", "precision", "recall", "rows", "positives")
+            for key in (
+                "average_precision",
+                "roc_auc",
+                "precision",
+                "recall",
+                "rows",
+                "positives",
+                "at_threshold",
+            )
             if key in metrics
         },
+        # Lets the page say where a score sits among legitimate transactions, rather
+        # than showing a raw score whose scale is an artefact of the class weighting.
+        "legitimate_quantiles": metrics.get("legitimate_quantiles", {}),
     }
 
     out.parent.mkdir(parents=True, exist_ok=True)

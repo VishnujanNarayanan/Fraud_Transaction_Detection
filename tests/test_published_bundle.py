@@ -108,3 +108,26 @@ def test_published_metrics_are_plausible(bundle):
         assert 0.0 <= metrics["average_precision"] <= 1.0
     if "rows" in metrics:
         assert metrics["rows"] > 0
+
+
+def test_bundle_carries_the_legitimate_score_distribution(bundle):
+    """The page needs this to say where a score sits, instead of showing a raw one."""
+    quantiles = bundle.get("legitimate_quantiles") or {}
+    assert quantiles.get("values"), "no legitimate score distribution in the bundle"
+    assert len(quantiles["values"]) == len(quantiles["percentiles"])
+
+
+def test_quantile_values_are_monotonic(bundle):
+    """A non-monotonic table would make the page's binary search return nonsense."""
+    values = bundle["legitimate_quantiles"]["values"]
+    assert values == sorted(values)
+
+
+def test_bundle_reports_performance_at_the_real_threshold(bundle):
+    """Reporting only the 0.50 figures understates the model by a factor of ~18 on precision."""
+    at = (bundle.get("metrics") or {}).get("at_threshold") or {}
+    for key in ("precision", "recall", "alerts"):
+        assert key in at, f"at_threshold is missing {key}"
+    assert at["precision"] > bundle["metrics"]["precision"], (
+        "precision at the chosen threshold should beat precision at 0.50"
+    )
