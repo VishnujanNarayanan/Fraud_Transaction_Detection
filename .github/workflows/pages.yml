@@ -1,0 +1,49 @@
+name: Deploy demo to GitHub Pages
+
+# GitHub Pages serves docs/ as static files. There is no server process, so the
+# page has no cold start: the first visitor gets it from the CDN immediately.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a running deployment, but only keep one queued behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Warn if the model bundle is missing
+        # The page degrades to an explanatory message rather than breaking, but a
+        # deployment without the model is not a working demo and should be loud.
+        run: |
+          if [ ! -f docs/model.json ]; then
+            echo "::warning::docs/model.json is absent - the demo will render its \
+            'model not loaded' notice. Run 'python -m src.train' then \
+            'python -m src.export_web' and commit docs/model.json."
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -30,6 +30,12 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - uses: actions/setup-node@v4
+        with:
+          # The demo page's scoring JavaScript is executed by tests/test_browser_parity.py
+          # and compared to scikit-learn, so Node is a test dependency, not a build one.
+          node-version: "20"
+
       - name: Test
         # Fraud.csv is a 470 MB gitignored download, so the suite builds its own
         # PaySim-shaped fixtures and runs in seconds without it.
