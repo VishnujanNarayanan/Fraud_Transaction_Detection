@@ -147,6 +147,81 @@ def input_ranges(frame) -> dict:
     return out
 
 
+#: The channels the model is actually asked to score. FraudPreprocessor.fit drops the
+#: other three, and PaySim never labels them fraudulent, so prevalence figures quoted
+#: over all six million rows would describe a population the model never sees.
+SCORED_CHANNELS = ("TRANSFER", "CASH_OUT")
+
+
+def balance_patterns(frame, target: str = "isFraud") -> dict:
+    """How common each balance shape is, and how fraudulent, in the scored channels.
+
+    This exists to stop the demo warning about normal data. Intuition says a transfer
+    larger than the sender's balance, or a recipient whose balance does not move, is
+    broken input. In PaySim both are ordinary: 89.8% and 22.7% of scored rows
+    respectively. Telling a visitor those are unreal would be false, and would steer
+    them away from the shapes that carry the signal -- a recipient balance that does not
+    move is roughly six times more likely to be fraud, which is exactly what the
+    engineered suspicious_flag encodes.
+
+    So the page reports prevalence instead of warning. Measured, not assumed.
+    """
+    import numpy as np
+
+    scored = frame[frame["type"].isin(SCORED_CHANNELS)]
+    if scored.empty:
+        return {}
+
+    labels = scored[target].to_numpy() if target in scored.columns else None
+    amount = scored["amount"].to_numpy()
+
+    old_org = scored["oldbalanceOrg"].to_numpy()
+    new_org = scored["newbalanceOrig"].to_numpy()
+    old_dest = scored["oldbalanceDest"].to_numpy()
+    new_dest = scored["newbalanceDest"].to_numpy()
+
+    masks = {
+        "amount_over_sender_balance": amount > old_org,
+        "sender_balance_mismatch": np.abs(old_org - amount - new_org) > 0.01,
+        "recipient_balance_mismatch": np.abs(old_dest + amount - new_dest) > 0.01,
+        # Rare shapes worth naming individually, because their fraud rates are extreme
+        # in both directions and a visitor who lands on one should be told.
+        "amount_zero": amount == 0,
+        "recipient_empty_throughout": (old_dest == 0) & (new_dest == 0),
+        "recipient_balance_fell": new_dest < old_dest,
+        "recipient_gained_more_than_sent": new_dest > old_dest + amount + 0.01,
+        "sender_balance_rose": new_org > old_org,
+        "sender_started_empty": old_org == 0,
+    }
+
+    out = {"rows": int(len(scored))}
+    if labels is not None:
+        out["base_rate"] = float(labels.mean())
+    for name, mask in masks.items():
+        entry = {"share": float(mask.mean()), "rows": int(mask.sum())}
+        if labels is not None and mask.any():
+            entry["fraud_rate"] = float(labels[mask].mean())
+        out[name] = entry
+    return out
+
+
+def channel_summary(frame, target: str = "isFraud") -> dict:
+    """Every transaction channel in the data, with its size and fraud rate.
+
+    The demo previously offered only the two channels the encoder was fitted on. The
+    other three exist in the data and a visitor may reasonably want to try them, so
+    they are offered too -- labelled, because PaySim contains no fraud at all in
+    PAYMENT, DEBIT or CASH_IN and the model was never fitted on them.
+    """
+    out = {}
+    for channel, group in frame.groupby("type"):
+        entry = {"rows": int(len(group)), "fitted": channel in SCORED_CHANNELS}
+        if target in group.columns:
+            entry["fraud_rate"] = float(group[target].mean())
+        out[str(channel)] = entry
+    return out
+
+
 def curve_points(y_true, scores, points: int = 200) -> dict:
     """A precision-recall curve thinned to `points`, for plotting or export."""
     precision, recall, _ = precision_recall_curve(y_true, scores)

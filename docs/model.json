@@ -395,5 +395,81 @@
       "p999": 39531571.967446424,
       "max": 356179278.92
     }
+  },
+  "balance_patterns": {
+    "rows": 2770409,
+    "base_rate": 0.002964544224336551,
+    "amount_over_sender_balance": {
+      "share": 0.8982911909396771,
+      "rows": 2488634,
+      "fraud_rate": 1.1652979104199331e-05
+    },
+    "sender_balance_mismatch": {
+      "share": 0.9024122431020113,
+      "rows": 2500051,
+      "fraud_rate": 1.7999632807490726e-05
+    },
+    "recipient_balance_mismatch": {
+      "share": 0.226766878103558,
+      "rows": 628237,
+      "fraud_rate": 0.007385747735329183
+    },
+    "amount_zero": {
+      "share": 5.77532053931387e-06,
+      "rows": 16,
+      "fraud_rate": 1.0
+    },
+    "recipient_empty_throughout": {
+      "share": 0.00208705645989455,
+      "rows": 5782,
+      "fraud_rate": 0.7049463853337945
+    },
+    "recipient_balance_fell": {
+      "share": 0.015503487030254377,
+      "rows": 42951,
+      "fraud_rate": 0.0006286233149402808
+    },
+    "recipient_gained_more_than_sent": {
+      "share": 0.0765237190609762,
+      "rows": 212002,
+      "fraud_rate": 0.000698106621635645
+    },
+    "sender_balance_rose": {
+      "share": 7.219150674142338e-07,
+      "rows": 2,
+      "fraud_rate": 0.0
+    },
+    "sender_started_empty": {
+      "share": 0.47234253137352644,
+      "rows": 1308582,
+      "fraud_rate": 3.1331624613512946e-05
+    }
+  },
+  "channels": {
+    "CASH_IN": {
+      "rows": 1399284,
+      "fitted": false,
+      "fraud_rate": 0.0
+    },
+    "CASH_OUT": {
+      "rows": 2237500,
+      "fitted": true,
+      "fraud_rate": 0.0018395530726256983
+    },
+    "DEBIT": {
+      "rows": 41432,
+      "fitted": false,
+      "fraud_rate": 0.0
+    },
+    "PAYMENT": {
+      "rows": 2151495,
+      "fitted": false,
+      "fraud_rate": 0.0
+    },
+    "TRANSFER": {
+      "rows": 532909,
+      "fitted": true,
+      "fraud_rate": 0.007687991758442811
+    }
   }
 }

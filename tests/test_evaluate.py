@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 
 from src.evaluate import (
+    balance_patterns,
+    channel_summary,
     curve_points,
     evaluate,
     input_ranges,
@@ -152,3 +154,35 @@ def test_input_ranges_bracket_the_observed_data():
     ranges = input_ranges(frame)
     assert ranges["amount"]["min"] == pytest.approx(frame["amount"].min())
     assert ranges["amount"]["max"] == pytest.approx(frame["amount"].max())
+
+
+def test_balance_patterns_cover_the_shapes_the_demo_reports():
+    """A missing key silently drops that explanation from the page."""
+    patterns = balance_patterns(make_frame(n=2000, seed=81))
+    for key in (
+        "amount_over_sender_balance",
+        "sender_balance_mismatch",
+        "recipient_balance_mismatch",
+        "amount_zero",
+        "recipient_empty_throughout",
+        "recipient_balance_fell",
+        "recipient_gained_more_than_sent",
+        "sender_balance_rose",
+        "sender_started_empty",
+    ):
+        assert key in patterns, key
+        assert 0.0 <= patterns[key]["share"] <= 1.0
+
+
+def test_balance_patterns_only_describe_the_scored_channels():
+    """Quoting prevalence over all six channels would describe a population the model never sees."""
+    frame = make_frame(n=2000, seed=82)
+    scored = frame[frame["type"].isin(["TRANSFER", "CASH_OUT"])]
+    assert balance_patterns(frame)["rows"] == len(scored)
+
+
+def test_channel_summary_lists_every_channel_and_marks_the_fitted_ones():
+    summary = channel_summary(make_frame(n=2000, seed=83))
+    assert summary, "no channels summarised"
+    assert summary["TRANSFER"]["fitted"] is True
+    assert summary["PAYMENT"]["fitted"] is False
