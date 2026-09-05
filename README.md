@@ -281,8 +281,18 @@ python -m src.db --query fraud_by_type
 **Publish the browser demo:**
 
 ```bash
-python -m src.export_web         # writes docs/model.json
+python -m src.train              # 1. fit and persist to artifacts/
+python -m src.export_web         # 2. write docs/model.json
+git add docs/model.json && git commit -m "chore: publish trained model bundle"
+git push                         # 3. Pages redeploys automatically
 ```
+
+Step 3 is what makes the demo live. Until `docs/model.json` exists the page loads and
+explains that the model is missing, rather than breaking — and `tests/test_published_bundle.py`
+skips until the bundle is there, then becomes a hard gate on it.
+
+Everyone who opens the demo downloads that same static file and runs the same arithmetic, so
+every visitor sees identical scores.
 
 **Or read it as a notebook:**
 
