@@ -11,12 +11,13 @@
      makes the first visitor wait 30-50 seconds. */
   :root{
     --bg:#ffffff; --fg:#16181d; --muted:#5b6472; --line:#e3e6ea;
-    --card:#f7f8fa; --accent:#1f6feb; --safe:#127f4b; --warn:#b3261e;
+    --card:#f7f8fa; --accent:#1f6feb; --safe:#127f4b; --warn:#b3261e; --watch:#9a6700;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   @media (prefers-color-scheme: dark){
     :root{ --bg:#0f1115; --fg:#e7e9ee; --muted:#9aa4b2; --line:#262b33;
-           --card:#161a20; --accent:#589bff; --safe:#3fb27f; --warn:#ff6b5e; }
+           --card:#161a20; --accent:#589bff; --safe:#3fb27f; --warn:#ff6b5e;
+           --watch:#d4a017; }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);
@@ -36,9 +37,11 @@
   .verdict{margin-top:20px;padding:18px 20px;border-radius:10px;border:1px solid var(--line);
            display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
   .verdict.alert{border-color:var(--warn)}
+  .verdict.watch{border-color:var(--watch)}
   .verdict.clear{border-color:var(--safe)}
   .score{font:700 2.1rem/1 var(--mono);letter-spacing:-.03em}
-  .alert .score{color:var(--warn)} .clear .score{color:var(--safe)}
+  .alert .score{color:var(--warn)} .watch .score{color:var(--watch)}
+  .clear .score{color:var(--safe)}
   .verdict p{margin:0;color:var(--muted);font-size:.9rem;flex:1;min-width:220px}
   .bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px}
   .bar i{display:block;height:100%;background:var(--accent);transition:width .18s ease}
@@ -431,6 +434,13 @@ function balanceContext(row){
   return notes;
 }
 
+function pctText(value){
+  // Keep the resolution the tail needs without printing "66.00%" for an ordinary one.
+  if (value >= 99.9 || value <= 0.1) return value.toFixed(2);
+  if (value >= 99 || value <= 1) return value.toFixed(1);
+  return value.toFixed(0);
+}
+
 function fmt(n){
   return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
 }
@@ -480,29 +490,41 @@ function render(){
   const alerts = probability >= M.threshold;
   const pct = percentileOf(probability);
 
-  // The headline is the percentile, not the raw score. "Riskier than 99.8% of ordinary
-  // transactions" is a sentence anyone can act on; "97.7%" is not.
+  // The headline reads in the direction risk actually runs: a bigger number means a
+  // worse transaction. "top 0.25%" inverted that -- the number shrank as risk grew --
+  // so it is stated as a comparison against ordinary transactions instead, and the
+  // wording flips at the halfway mark so the figure shown is never the small side of
+  // the split.
+  const riskier = pct !== null && pct >= 50;
+  const magnitude = pct === null ? null : (riskier ? pct : 100 - pct);
+
   const scoreEl = document.getElementById("score");
   scoreEl.textContent = pct === null
     ? (probability * 100).toFixed(1) + "%"
-    : (pct >= 99.95 ? "top 0.05%" : "top " + (100 - pct).toFixed(pct >= 99 ? 2 : 0) + "%");
+    : pctText(magnitude) + "%";
 
   document.getElementById("bar").style.width = (pct === null ? probability * 100 : pct) + "%";
 
+  // Three states, not two. A transaction can sit in the riskiest fraction of the
+  // population and still fall outside a review queue that only takes the top 0.15%,
+  // and painting that green looks like the page has misread it.
   const box = document.getElementById("verdict");
-  box.className = "verdict " + (alerts ? "alert" : "clear");
+  box.className = "verdict " + (alerts ? "alert" : (pct !== null && pct >= 99 ? "watch" : "clear"));
 
-  // Saying "top 0.25%" and then "passes" looks broken until you say how small the
-  // review queue is. The queue is the top 0.15%, so 0.25% genuinely sits outside it.
   const at = (M.metrics || {}).at_threshold || {};
   const queue = (at.alerts && M.metrics.rows)
     ? (100 * at.alerts / M.metrics.rows).toFixed(2) + "%"
     : null;
+
+  const comparison = pct === null ? "This transaction"
+    : riskier ? `Riskier than ${pctText(pct)}% of ordinary transactions`
+              : `Safer than ${pctText(100 - pct)}% of ordinary transactions`;
+
   document.getElementById("explain").textContent = alerts
-    ? "Riskier than " + pct + "% of ordinary transactions. An analyst would review this one"
-      + (queue ? " — it is inside the top " + queue + " the model sends for review." : ".")
-    : "Riskier than " + pct + "% of ordinary transactions"
-      + (queue ? ", but the review queue is only the top " + queue + ", so this one is left alone."
+    ? comparison + ". An analyst would review this one"
+      + (queue ? ` — it is inside the top ${queue} the model sends for review.` : ".")
+    : comparison
+      + (queue ? `, and the review queue is only the top ${queue}, so this one is left alone.`
                : ", which is not unusual enough to review.");
 
   document.getElementById("rawnote").textContent =
