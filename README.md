@@ -224,7 +224,7 @@ cd Fraud_Transaction_Detection
 Create a virtual environment and install dependencies:
 
 ```bash
-python -m venv env
+python3 -m venv env
 source env/bin/activate      # Linux / macOS
 env\Scripts\activate         # Windows
 pip install -r requirements.txt
@@ -246,11 +246,19 @@ unzip paysim1.zip
 
 The notebook is the narrative; the command line is the pipeline.
 
+> Every command below assumes the virtual environment from
+> [Installation](#installation) is **activated** — that is what makes `python` resolve. On a
+> system where it is not, use `python3` instead; Debian and Ubuntu ship no bare `python`.
+
 **Train and persist everything:**
 
 ```bash
-python -m src.train              # add --reduced to drop the weak features
+python -m src.train                          # add --reduced to drop the weak features
+python -m src.train --csv /path/to/Fraud.csv # or point it anywhere
 ```
+
+`Fraud.csv` must be present first — see [Getting the data](#getting-the-data). It is a 470 MB
+download and is deliberately gitignored, so this is the one step that cannot be automated for you.
 
 Writes `artifacts/`: the fitted preprocessor, the model, the column order, the metrics and the
 coefficients ranked by absolute weight.
