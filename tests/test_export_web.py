@@ -34,6 +34,8 @@ def test_bundle_has_everything_the_browser_needs(bundle):
         "numeric_features",
         "scaler_mean",
         "scaler_scale",
+        "feature_mean",
+        "feature_scale",
         "type_categories",
         "threshold",
     ):

@@ -26,3 +26,7 @@ __pycache__/
 # Generated model artifacts and the local analytics database
 artifacts/
 *.db
+
+# Downloaded dataset archives
+*.zip
+*:Zone.Identifier

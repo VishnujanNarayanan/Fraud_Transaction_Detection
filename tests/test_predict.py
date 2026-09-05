@@ -47,7 +47,7 @@ def test_scoring_does_not_mutate_the_input(artifacts):
 
 
 def test_threshold_defaults_to_the_one_chosen_at_training_time(artifacts):
-    _, _, _, threshold = load_artifacts(artifacts)
+    *_, threshold = load_artifacts(artifacts)
     expected = json.loads((artifacts / "metrics.json").read_text())["threshold"]
     assert threshold == expected
 

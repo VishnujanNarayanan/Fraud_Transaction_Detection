@@ -35,6 +35,8 @@ def test_bundle_is_valid_json_with_every_required_key(bundle):
         "numeric_features",
         "scaler_mean",
         "scaler_scale",
+        "feature_mean",
+        "feature_scale",
         "type_categories",
         "threshold",
     ):
@@ -54,11 +56,18 @@ def test_scaler_moments_line_up_with_numeric_features(bundle):
 def test_no_scale_is_zero(bundle):
     """A zero scale would divide by zero in the browser and yield NaN or Infinity."""
     assert all(scale != 0 for scale in bundle["scaler_scale"])
+    assert all(scale != 0 for scale in bundle["feature_scale"])
+
+
+def test_feature_scaler_covers_every_column(bundle):
+    """One mean and one scale per feature column, or the page misaligns them."""
+    assert len(bundle["feature_mean"]) == len(bundle["feature_columns"])
+    assert len(bundle["feature_scale"]) == len(bundle["feature_columns"])
 
 
 def test_every_value_is_finite(bundle):
     """NaN survives json.dumps as a bare literal that JSON.parse rejects outright."""
-    for key in ("coefficients", "scaler_mean", "scaler_scale"):
+    for key in ("coefficients", "scaler_mean", "scaler_scale", "feature_mean", "feature_scale"):
         for value in bundle[key]:
             assert value == value, f"{key} contains NaN"
             assert abs(value) != float("inf"), f"{key} contains an infinity"

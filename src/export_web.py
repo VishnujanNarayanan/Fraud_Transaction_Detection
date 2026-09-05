@@ -29,6 +29,7 @@ DEFAULT_OUT = ROOT / "docs" / "model.json"
 def export(artifacts: Path = ARTIFACTS, out: Path = DEFAULT_OUT) -> dict:
     """Write the model, scaler moments and one-hot categories as a JSON bundle."""
     pre = joblib.load(artifacts / "fraud_preprocessor.pkl")
+    feature_scaler = joblib.load(artifacts / "feature_scaler.joblib")
     model = joblib.load(artifacts / "fraud_model.joblib")
     columns = json.loads((artifacts / "feature_columns.json").read_text())
 
@@ -45,6 +46,10 @@ def export(artifacts: Path = ARTIFACTS, out: Path = DEFAULT_OUT) -> dict:
         "scaler_mean": [float(m) for m in pre.scaler.mean_],
         "scaler_scale": [float(s) for s in pre.scaler.scale_],
         "log_transform": bool(pre.log_transform),
+        # The second scaler, over every feature column. Without it the page would
+        # feed raw engineered values to coefficients fitted on standardised ones.
+        "feature_mean": [float(m) for m in feature_scaler.mean_],
+        "feature_scale": [float(s) for s in feature_scaler.scale_],
         "type_categories": [str(c) for c in pre.ohe.categories_[0]],
         "threshold": float(metrics.get("threshold", 0.5)),
         "metrics": {
@@ -102,10 +107,14 @@ def score_like_browser(bundle: dict, row: dict) -> float:
         features[name] = (features[name] - mean) / scale
 
     total = bundle["intercept"]
-    for name, coefficient in zip(
-        bundle["feature_columns"], bundle["coefficients"], strict=True
+    for name, coefficient, mean, scale in zip(
+        bundle["feature_columns"],
+        bundle["coefficients"],
+        bundle["feature_mean"],
+        bundle["feature_scale"],
+        strict=True,
     ):
-        total += coefficient * features.get(name, 0.0)
+        total += coefficient * ((features.get(name, 0.0) - mean) / scale)
     # Numerically stable sigmoid: exp(-total) overflows for strongly negative
     # scores, and the browser's Math.exp has the same problem. Both sides branch.
     if total >= 0:

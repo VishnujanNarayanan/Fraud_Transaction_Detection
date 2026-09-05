@@ -218,7 +218,10 @@ function score(row){
   let z = M.intercept;
   const contributions = [];
   M.feature_columns.forEach((name, i) => {
-    const value = f[name] ?? 0;
+    // The second standardisation, over every feature column. FraudPreprocessor scales
+    // only four of them; the engineered ones arrive raw and must be scaled here or the
+    // coefficients are applied to the wrong magnitudes.
+    const value = ((f[name] ?? 0) - M.feature_mean[i]) / M.feature_scale[i];
     const contribution = M.coefficients[i] * value;
     z += contribution;
     contributions.push({name, contribution});
