@@ -89,6 +89,32 @@ def pick_threshold(y_true, scores, beta: float = 2.0) -> float:
     return float(thresholds[int(np.argmax(f_beta))])
 
 
+def legitimate_quantiles(y_true, scores) -> dict:
+    """The score distribution of LEGITIMATE rows, as a quantile table.
+
+    class_weight="balanced" upweights the positive class by roughly 775 to 1, so the
+    model's output is a risk ranking, not a calibrated probability. On held-out data the
+    median legitimate transaction scores 0.0000 and the 99th percentile scores 0.81 — so
+    a raw score of 0.977, which reads alarmingly high to a person, is beaten by 0.22% of
+    perfectly ordinary transactions.
+
+    Publishing this table lets a reader be told where a score sits in the legitimate
+    population, which is the question they actually have, instead of a number whose
+    scale is an artefact of the class weighting.
+
+    The grid is deliberately dense above the 99th percentile, because that is where the
+    entire decision lives.
+    """
+    y_true = np.asarray(y_true)
+    scores = np.asarray(scores)
+    legitimate = scores[y_true == 0]
+    grid = np.concatenate([np.arange(0.0, 99.0, 1.0), np.arange(99.0, 100.001, 0.05)])
+    return {
+        "percentiles": [round(float(p), 3) for p in grid],
+        "values": [float(v) for v in np.percentile(legitimate, grid)],
+    }
+
+
 def curve_points(y_true, scores, points: int = 200) -> dict:
     """A precision-recall curve thinned to `points`, for plotting or export."""
     precision, recall, _ = precision_recall_curve(y_true, scores)

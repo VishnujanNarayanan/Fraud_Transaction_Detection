@@ -8,7 +8,13 @@ substitutes rather than just checking sklearn still returns a float.
 import numpy as np
 import pytest
 
-from src.evaluate import curve_points, evaluate, pick_threshold, threshold_sweep
+from src.evaluate import (
+    curve_points,
+    evaluate,
+    legitimate_quantiles,
+    pick_threshold,
+    threshold_sweep,
+)
 
 
 @pytest.fixture
@@ -94,3 +100,25 @@ def test_a_perfect_ranker_scores_one():
     result = evaluate(y, scores)
     assert result["average_precision"] == pytest.approx(1.0)
     assert result["recall"] == pytest.approx(1.0)
+
+
+def test_legitimate_quantiles_are_monotonic(imbalanced):
+    """The page binary-searches this table, so order is a correctness requirement."""
+    table = legitimate_quantiles(*imbalanced)
+    assert table["values"] == sorted(table["values"])
+    assert len(table["values"]) == len(table["percentiles"])
+
+
+def test_legitimate_quantiles_describe_only_the_negatives(imbalanced):
+    """Including fraud rows would inflate the reference distribution and flatten the tail."""
+    import numpy as np
+
+    y, scores = imbalanced
+    table = legitimate_quantiles(y, scores)
+    assert table["values"][-1] == pytest.approx(float(np.max(scores[y == 0])))
+
+
+def test_quantile_grid_is_dense_in_the_tail(imbalanced):
+    """The decision lives above the 99th percentile, so that is where resolution matters."""
+    percentiles = legitimate_quantiles(*imbalanced)["percentiles"]
+    assert sum(1 for p in percentiles if p >= 99.0) >= 20
