@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Transaction Detection — live demo</title>
+<meta name="description" content="Score a mobile-money transaction for fraud in the browser. The model runs client-side; there is no server and no cold start.">
+<style>
+  /* Everything is inline and there are no external requests, so the page paints
+     on first byte. That is the whole design goal: a hosted free tier sleeps and
+     makes the first visitor wait 30-50 seconds. */
+  :root{
+    --bg:#ffffff; --fg:#16181d; --muted:#5b6472; --line:#e3e6ea;
+    --card:#f7f8fa; --accent:#1f6feb; --safe:#127f4b; --warn:#b3261e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --fg:#e7e9ee; --muted:#9aa4b2; --line:#262b33;
+           --card:#161a20; --accent:#589bff; --safe:#3fb27f; --warn:#ff6b5e; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:40px 20px 72px}
+  h1{font-size:1.7rem;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:1.05rem;margin:34px 0 10px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 26px}
+  a{color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
+  label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:5px;
+        text-transform:uppercase;letter-spacing:.05em}
+  input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;
+               background:var(--bg);color:var(--fg);font:14px var(--mono)}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .verdict{margin-top:20px;padding:18px 20px;border-radius:10px;border:1px solid var(--line);
+           display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  .verdict.alert{border-color:var(--warn)}
+  .verdict.clear{border-color:var(--safe)}
+  .score{font:700 2.1rem/1 var(--mono);letter-spacing:-.03em}
+  .alert .score{color:var(--warn)} .clear .score{color:var(--safe)}
+  .verdict p{margin:0;color:var(--muted);font-size:.9rem;flex:1;min-width:220px}
+  .bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px}
+  .bar i{display:block;height:100%;background:var(--accent);transition:width .18s ease}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .presets button{padding:7px 13px;border:1px solid var(--line);border-radius:999px;
+                  background:var(--bg);color:var(--fg);font-size:.85rem;cursor:pointer}
+  .presets button:hover{border-color:var(--accent);color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:.76rem;text-transform:uppercase;letter-spacing:.05em}
+  td.num{font-family:var(--mono);text-align:right}
+  .scroll{overflow-x:auto}
+  .note{color:var(--muted);font-size:.87rem}
+  footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);
+         color:var(--muted);font-size:.85rem}
+  .warnbox{border:1px solid var(--warn);border-radius:10px;padding:16px 18px;margin-bottom:24px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Fraud Transaction Detection</h1>
+  <p class="sub">
+    A logistic-regression fraud scorer trained on 6.36M PaySim mobile-money transactions.
+    <strong>The model runs in your browser</strong> — the page ships the fitted coefficients and
+    scaler moments as a few kilobytes of JSON, so there is no server, no cold start and nothing to wake up.
+  </p>
+
+  <div id="unavailable" class="warnbox" hidden>
+    <strong>Model not loaded.</strong>
+    <span class="note">Run <code>python -m src.train</code> then <code>python -m src.export_web</code>
+    to generate <code>docs/model.json</code>.</span>
+  </div>
+
+  <div id="app" hidden>
+    <h2>Score a transaction</h2>
+    <div class="presets">
+      <button type="button" data-preset="fraud">Typical fraud pattern</button>
+      <button type="button" data-preset="legit">Ordinary transfer</button>
+      <button type="button" data-preset="payment">Retail payment</button>
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div>
+          <label for="type">Channel</label>
+          <select id="type"></select>
+        </div>
+        <div>
+          <label for="step">Hour of simulation</label>
+          <input id="step" type="number" value="200" min="0" max="743">
+        </div>
+        <div>
+          <label for="amount">Amount</label>
+          <input id="amount" type="number" value="850000" min="0" step="any">
+        </div>
+        <div>
+          <label for="oldbalanceOrg">Sender balance before</label>
+          <input id="oldbalanceOrg" type="number" value="850000" min="0" step="any">
+        </div>
+        <div>
+          <label for="newbalanceOrig">Sender balance after</label>
+          <input id="newbalanceOrig" type="number" value="0" min="0" step="any">
+        </div>
+        <div>
+          <label for="oldbalanceDest">Recipient balance before</label>
+          <input id="oldbalanceDest" type="number" value="0" min="0" step="any">
+        </div>
+        <div>
+          <label for="newbalanceDest">Recipient balance after</label>
+          <input id="newbalanceDest" type="number" value="0" min="0" step="any">
+        </div>
+      </div>
+
+      <div id="verdict" class="verdict">
+        <span class="score" id="score">—</span>
+        <p id="explain"></p>
+      </div>
+      <div class="bar"><i id="bar" style="width:0%"></i></div>
+    </div>
+
+    <h2>Why it scored that way</h2>
+    <p class="note">
+      The five features contributing most to this particular score, largest effect first.
+      Each is the fitted coefficient multiplied by this transaction's value for that feature.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Feature</th><th class="num">Contribution</th></tr></thead>
+        <tbody id="contrib"></tbody>
+      </table>
+    </div>
+
+    <h2>How the model performs</h2>
+    <p class="note" id="metrics-note"></p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Metric</th><th class="num">Value</th><th>What it means</th></tr></thead>
+        <tbody id="metrics"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    Trained on <a href="https://www.kaggle.com/datasets/ealaxi/paysim1">PaySim</a>, an agent-based
+    simulation of mobile-money transactions. Simulated data — rules that hold here should not be
+    assumed to hold in production.
+    <a href="https://github.com/VishnujanNarayanan/Fraud_Transaction_Detection">Source on GitHub</a>.
+  </footer>
+</div>
+
+<script>
+// The browser reimplementation of FraudPreprocessor.transform followed by the
+// model's sigmoid. src/export_web.py holds a Python mirror of this arithmetic, and
+// tests/test_export_web.py asserts the two agree to 1e-9 on real rows -- so this
+// cannot silently drift from what scikit-learn would say.
+let M = null;
+
+const PRESETS = {
+  fraud:   {type:"TRANSFER", step:200, amount:850000, oldbalanceOrg:850000,
+            newbalanceOrig:0, oldbalanceDest:0, newbalanceDest:0},
+  legit:   {type:"TRANSFER", step:110, amount:14500, oldbalanceOrg:220000,
+            newbalanceOrig:205500, oldbalanceDest:38000, newbalanceDest:52500},
+  payment: {type:"CASH_OUT", step:64, amount:3200, oldbalanceOrg:47000,
+            newbalanceOrig:43800, oldbalanceDest:120000, newbalanceDest:123200}
+};
+
+const FIELDS = ["step","amount","oldbalanceOrg","newbalanceOrig",
+                "oldbalanceDest","newbalanceDest"];
+
+const METRIC_COPY = {
+  average_precision: "Area under the precision-recall curve. The honest summary on data this imbalanced.",
+  roc_auc: "Reads high because 99.87% of rows are easy negatives. Kept for comparison only.",
+  precision: "Share of alerts that are genuine fraud, at the chosen threshold.",
+  recall: "Share of real fraud the model catches, at the chosen threshold."
+};
+
+function sigmoid(z){
+  // Branch the same way the Python does, so neither side overflows.
+  if (z >= 0) return 1 / (1 + Math.exp(-z));
+  const e = Math.exp(z);
+  return e / (1 + e);
+}
+
+function buildFeatures(row){
+  const f = {};
+  const {step, amount, oldbalanceOrg, newbalanceOrig, oldbalanceDest, newbalanceDest} = row;
+
+  f.step = step;
+  f.amount = amount;
+  f.oldbalanceOrg = oldbalanceOrg;
+  f.oldbalanceDest = oldbalanceDest;
+  f.newbalanceDest = newbalanceDest;
+  f.diff_orig = oldbalanceOrg - newbalanceOrig;
+  f.diff_dest = newbalanceDest - oldbalanceDest;
+  f.hour = step % 24;
+  f.day_of_week = step % 168;
+  f.hour_sin = Math.sin(2 * Math.PI * (step % 24) / 24);
+  f.hour_cos = Math.cos(2 * Math.PI * (step % 24) / 24);
+
+  // An unrecognised channel one-hots to all zeros, matching handle_unknown="ignore".
+  for (const c of M.type_categories) f["type_" + c] = (row.type === c) ? 1 : 0;
+
+  f.always_nonfraud_type = 0;
+  if (M.log_transform) f.log_amount = Math.log1p(amount);
+  f.suspicious_flag = (amount > 0 && newbalanceDest === oldbalanceDest) ? 1 : 0;
+  f.error_flag = (oldbalanceOrg < 0 || oldbalanceDest < 0 || newbalanceDest < 0) ? 1 : 0;
+
+  M.numeric_features.forEach((name, i) => {
+    f[name] = (f[name] - M.scaler_mean[i]) / M.scaler_scale[i];
+  });
+  return f;
+}
+
+function score(row){
+  const f = buildFeatures(row);
+  let z = M.intercept;
+  const contributions = [];
+  M.feature_columns.forEach((name, i) => {
+    const value = f[name] ?? 0;
+    const contribution = M.coefficients[i] * value;
+    z += contribution;
+    contributions.push({name, contribution});
+  });
+  contributions.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  return {probability: sigmoid(z), contributions};
+}
+
+function readForm(){
+  const row = {type: document.getElementById("type").value};
+  for (const id of FIELDS) row[id] = parseFloat(document.getElementById(id).value) || 0;
+  return row;
+}
+
+function render(){
+  const {probability, contributions} = score(readForm());
+  const alerts = probability >= M.threshold;
+  const percent = (probability * 100);
+
+  document.getElementById("score").textContent =
+    percent < 1 ? percent.toFixed(2) + "%" : percent.toFixed(1) + "%";
+  document.getElementById("bar").style.width = Math.min(100, percent) + "%";
+
+  const box = document.getElementById("verdict");
+  box.className = "verdict " + (alerts ? "alert" : "clear");
+  document.getElementById("explain").textContent = alerts
+    ? `Above the ${(M.threshold * 100).toFixed(1)}% alert threshold — this transaction would go to an analyst.`
+    : `Below the ${(M.threshold * 100).toFixed(1)}% alert threshold — this transaction would pass without review.`;
+
+  document.getElementById("contrib").innerHTML = contributions.slice(0, 5).map(c =>
+    `<tr><td>${c.name}</td><td class="num">${c.contribution >= 0 ? "+" : ""}${c.contribution.toFixed(3)}</td></tr>`
+  ).join("");
+}
+
+function applyPreset(name){
+  const preset = PRESETS[name];
+  document.getElementById("type").value = preset.type;
+  for (const id of FIELDS) document.getElementById(id).value = preset[id];
+  render();
+}
+
+function renderMetrics(){
+  const m = M.metrics || {};
+  const rows = Object.keys(METRIC_COPY)
+    .filter(k => k in m)
+    .map(k => `<tr><td>${k.replace(/_/g, " ")}</td><td class="num">${(+m[k]).toFixed(4)}</td><td class="note">${METRIC_COPY[k]}</td></tr>`);
+  document.getElementById("metrics").innerHTML = rows.join("");
+  if (m.rows && m.positives){
+    document.getElementById("metrics-note").textContent =
+      `Measured on a held-out split of ${(+m.rows).toLocaleString()} transactions, of which ${(+m.positives).toLocaleString()} were fraudulent.`;
+  }
+}
+
+fetch("model.json")
+  .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
+  .then(data => {
+    M = data;
+    document.getElementById("type").innerHTML =
+      M.type_categories.map(c => `<option value="${c}">${c}</option>`).join("");
+    document.getElementById("app").hidden = false;
+    for (const id of [...FIELDS, "type"]) {
+      document.getElementById(id).addEventListener("input", render);
+    }
+    document.querySelectorAll("[data-preset]").forEach(button => {
+      button.addEventListener("click", () => applyPreset(button.dataset.preset));
+    });
+    renderMetrics();
+    applyPreset("fraud");
+  })
+  .catch(() => { document.getElementById("unavailable").hidden = false; });
+</script>
+</body>
+</html>
