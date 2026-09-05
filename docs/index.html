@@ -71,7 +71,10 @@
   .actions button{padding:10px 22px;border:0;border-radius:8px;background:var(--accent);
                   color:#fff;font-size:.95rem;font-weight:600;cursor:pointer}
   .actions button:hover{filter:brightness(1.08)}
-  .actions button:disabled{opacity:.45;cursor:default;filter:none}
+  .actions button:disabled{opacity:.4;cursor:default;filter:none}
+  .actions button.secondary{background:transparent;color:var(--fg);
+                            border:1px solid var(--line);font-weight:500}
+  .actions button.secondary:not(:disabled):hover{border-color:var(--accent);color:var(--accent)}
   .verdict.stale{opacity:.4}
   input.derived{border-color:var(--accent)}
   .rangewarn{margin-top:14px;padding:12px 15px;border:1px solid var(--warn);
@@ -148,8 +151,9 @@
 
       <div class="actions">
         <button type="button" id="predict">Predict</button>
-        <span class="note" id="hint"></span>
+        <button type="button" id="adjust" class="secondary" disabled>Adjust other values</button>
       </div>
+      <p class="note" id="hint"></p>
 
       <div id="verdict" class="verdict">
         <span class="score" id="score">—</span>
@@ -523,22 +527,27 @@ function render(){
 }
 
 // --- interaction state -------------------------------------------------------
-// Scoring is not live. Editing one field once pulls the dependent balances along
-// with it, so the transaction stays arithmetically real; after that first edit the
-// page stops interfering, because from then on you are deliberately overriding it.
-// Predict scores what is on screen and re-arms the whole cycle.
-let autoAdjustArmed = true;
+// Scoring is not live, and nothing is rewritten behind your back. Every field is
+// free-form, because the data says inconsistent balances are the norm rather than an
+// error: 89.8% of scored transactions exceed the sender's balance and 22.7% leave the
+// recipient's unmoved. Making the others follow along is therefore a convenience you
+// ask for, not a rule the page enforces -- hence a button rather than magic.
+let lastEdited = null;
 let stale = true;
 
 function setStale(isStale){
   stale = isStale;
+  const canAdjust = lastEdited !== null && DERIVED[lastEdited] !== undefined;
   document.getElementById("verdict").classList.toggle("stale", isStale);
   document.getElementById("predict").disabled = !isStale;
-  document.getElementById("hint").textContent = isStale
-    ? (autoAdjustArmed
-        ? "Edit any field — the related balances follow. Then press Predict."
-        : "Further edits are left exactly as you type them. Press Predict when ready.")
-    : "Scored. Edit a field to start again.";
+  document.getElementById("adjust").disabled = !canAdjust;
+
+  document.getElementById("hint").textContent = !isStale
+    ? "Scored. Edit any field to try another transaction."
+    : canAdjust
+      ? `Press Predict to score this. Or press Adjust other values to make the other `
+        + `balances agree with the ${FIELD_NAMES[lastEdited]} you just set.`
+      : "Edit any field, then press Predict. Values are used exactly as you type them.";
 }
 
 function clearDerivedMarks(){
@@ -546,27 +555,27 @@ function clearDerivedMarks(){
 }
 
 function onFieldEdit(edited){
-  if (autoAdjustArmed && DERIVED[edited]) {
-    const row = readForm();
-    const updates = DERIVED[edited](row);
-    clearDerivedMarks();
-    for (const [field, value] of Object.entries(updates)) {
-      const input = document.getElementById(field);
-      if (input && document.activeElement !== input) {
-        input.value = Math.round(value * 100) / 100;
-        input.classList.add("derived");   // highlight what the page filled in
-      }
-    }
+  // Remember what was touched last; that is what Adjust derives the others from.
+  lastEdited = edited;
+  clearDerivedMarks();
+  setStale(true);
+}
+
+function adjustOthers(){
+  if (!lastEdited || !DERIVED[lastEdited]) return;
+  const updates = DERIVED[lastEdited](readForm());
+  clearDerivedMarks();
+  for (const [field, value] of Object.entries(updates)) {
+    const input = document.getElementById(field);
+    if (!input) continue;
+    input.value = Math.round(value * 100) / 100;
+    input.classList.add("derived");   // highlight what the page filled in
   }
-  // Whether or not anything was derived, the one free adjustment is now spent.
-  autoAdjustArmed = false;
   setStale(true);
 }
 
 function predict(){
   render();
-  clearDerivedMarks();
-  autoAdjustArmed = true;    // the cycle starts over
   setStale(false);
 }
 
@@ -575,7 +584,7 @@ function applyPreset(name){
   document.getElementById("type").value = preset.type;
   for (const id of FIELDS) document.getElementById(id).value = preset[id];
   clearDerivedMarks();
-  autoAdjustArmed = true;    // a preset is a clean slate, like pressing Predict
+  lastEdited = null;         // a preset is a clean slate
   render();
   setStale(false);
 }
@@ -638,6 +647,7 @@ fetch("model.json")
       document.getElementById(id).addEventListener("change", () => onFieldEdit(id));
     }
     document.getElementById("predict").addEventListener("click", predict);
+    document.getElementById("adjust").addEventListener("click", adjustOthers);
     document.querySelectorAll("[data-preset]").forEach(button => {
       button.addEventListener("click", () => applyPreset(button.dataset.preset));
     });
