@@ -15,3 +15,14 @@ accredian-env/
 bullet_extract_latest.yaml
 bullet_extract_[0-9]*.yaml
 resume_extract*.yaml
+
+# Python bytecode and packaging noise
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Generated model artifacts and the local analytics database
+artifacts/
+*.db
