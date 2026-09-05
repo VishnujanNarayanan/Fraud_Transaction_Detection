@@ -115,6 +115,38 @@ def legitimate_quantiles(y_true, scores) -> dict:
     }
 
 
+def input_ranges(frame) -> dict:
+    """What each raw input actually looks like in the training data.
+
+    The demo lets anyone type any number, and a model asked to score a transaction
+    unlike anything it was trained on will still answer confidently. Publishing the
+    observed range lets the page say so instead of pretending the answer is sound.
+
+    p999 rather than the maximum is the upper guide: PaySim's maxima are single
+    extreme rows, so warning against them would fire on almost nothing.
+    """
+    import numpy as np
+
+    out = {}
+    for column in (
+        "step",
+        "amount",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "oldbalanceDest",
+        "newbalanceDest",
+    ):
+        if column not in frame.columns:
+            continue
+        values = frame[column].to_numpy()
+        out[column] = {
+            "min": float(np.min(values)),
+            "p999": float(np.percentile(values, 99.9)),
+            "max": float(np.max(values)),
+        }
+    return out
+
+
 def curve_points(y_true, scores, points: int = 200) -> dict:
     """A precision-recall curve thinned to `points`, for plotting or export."""
     precision, recall, _ = precision_recall_curve(y_true, scores)

@@ -11,10 +11,13 @@ import pytest
 from src.evaluate import (
     curve_points,
     evaluate,
+    input_ranges,
     legitimate_quantiles,
     pick_threshold,
     threshold_sweep,
 )
+
+from .conftest import make_frame
 
 
 @pytest.fixture
@@ -122,3 +125,30 @@ def test_quantile_grid_is_dense_in_the_tail(imbalanced):
     """The decision lives above the 99th percentile, so that is where resolution matters."""
     percentiles = legitimate_quantiles(*imbalanced)["percentiles"]
     assert sum(1 for p in percentiles if p >= 99.0) >= 20
+
+
+def test_input_ranges_cover_every_typed_field():
+    """The demo warns per field, so a missing entry silently disables its warning."""
+    ranges = input_ranges(make_frame(n=500, seed=71))
+    for field in (
+        "step",
+        "amount",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "oldbalanceDest",
+        "newbalanceDest",
+    ):
+        assert field in ranges, field
+
+
+def test_input_ranges_are_ordered():
+    """min <= p999 <= max, or the page would warn about values inside the data."""
+    for bounds in input_ranges(make_frame(n=500, seed=72)).values():
+        assert bounds["min"] <= bounds["p999"] <= bounds["max"]
+
+
+def test_input_ranges_bracket_the_observed_data():
+    frame = make_frame(n=500, seed=73)
+    ranges = input_ranges(frame)
+    assert ranges["amount"]["min"] == pytest.approx(frame["amount"].min())
+    assert ranges["amount"]["max"] == pytest.approx(frame["amount"].max())
