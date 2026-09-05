@@ -147,3 +147,30 @@ def test_bundle_carries_input_ranges_for_every_typed_field(bundle):
         assert field in ranges, f"no published range for {field}"
         bounds = ranges[field]
         assert bounds["min"] <= bounds["p999"] <= bounds["max"]
+
+
+def test_bundle_reports_balance_pattern_prevalence(bundle):
+    """The page states how ordinary a shape is instead of calling normal data unreal."""
+    patterns = bundle.get("balance_patterns") or {}
+    assert patterns.get("rows"), "no balance patterns published"
+    for key in ("amount_over_sender_balance", "recipient_balance_mismatch", "amount_zero"):
+        assert key in patterns, key
+
+
+def test_common_shapes_are_not_treated_as_impossible(bundle):
+    """Guards the bug this data disproved: these are the majority of the scored rows.
+
+    89.8% of transfers and cash-outs exceed the sender's balance and 22.7% leave the
+    recipient's balance unmoved. An earlier version warned that both were unreal.
+    """
+    patterns = bundle["balance_patterns"]
+    assert patterns["amount_over_sender_balance"]["share"] > 0.5
+    assert patterns["recipient_balance_mismatch"]["share"] > 0.1
+
+
+def test_bundle_lists_every_channel_with_its_fraud_rate(bundle):
+    channels = bundle.get("channels") or {}
+    assert len(channels) >= 2
+    assert any(c["fitted"] for c in channels.values())
+    for name, info in channels.items():
+        assert info["rows"] > 0, name

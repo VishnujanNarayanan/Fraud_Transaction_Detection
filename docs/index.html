@@ -78,6 +78,11 @@
              border-radius:9px;font-size:.88rem}
   .rangewarn b{display:block;margin-bottom:4px}
   .rangewarn ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+  .contextbox{margin-top:14px;padding:12px 15px;border:1px solid var(--line);
+              border-radius:9px;font-size:.88rem}
+  .contextbox b{display:block;margin-bottom:4px}
+  .contextbox ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+  .contextbox li{margin-bottom:5px}
   .perfrow strong{display:block;font-size:.95rem;margin-bottom:3px}
   .perfrow span{color:var(--muted);font-size:.88rem}
   footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);
@@ -117,7 +122,7 @@
         </div>
         <div>
           <label for="step">Hour of simulation</label>
-          <input id="step" type="number" value="200" min="0" max="743">
+          <input id="step" type="number" value="200" min="1" max="743">
         </div>
         <div>
           <label for="amount">Amount</label>
@@ -153,6 +158,7 @@
       <div class="bar"><i id="bar" style="width:0%"></i></div>
       <p class="note" id="rawnote"></p>
       <div id="rangewarn" class="rangewarn" hidden></div>
+      <div id="context" class="contextbox" hidden></div>
     </div>
 
     <h2>What drove this score</h2>
@@ -330,11 +336,25 @@ const FIELD_NAMES = {
 };
 
 function rangeProblems(row){
-  // Two different kinds of unreal input, both worth saying out loud.
+  // ONLY genuinely out-of-distribution values. An earlier version of this page also
+  // warned when the balances did not add up, on the assumption that such rows were
+  // impossible. Measured against the training data, that was wrong and backwards:
+  // among the two channels the model scores, 89.8% of transactions are larger than the
+  // sender's balance and 22.7% leave the recipient's balance unmoved. Those are not
+  // broken inputs, they are the bulk of the data -- and the second one is the strongest
+  // fraud signal in it. Prevalence is reported in balanceContext() instead.
   const problems = [];
-  const R = M.input_ranges || {};
+  const P = M.balance_patterns || {};
 
-  for (const [field, bounds] of Object.entries(R)) {
+  // A shape the data contains only a couple of times is genuinely unlearned, as
+  // distinct from the common-but-counterintuitive shapes handled in balanceContext.
+  if (row.newbalanceOrig > row.oldbalanceOrg && P.sender_balance_rose
+      && P.sender_balance_rose.rows <= 100) {
+    problems.push(`A sender ending richer than they started appears only `
+      + `${P.sender_balance_rose.rows} times in ${fmt(P.rows)} transactions.`);
+  }
+
+  for (const [field, bounds] of Object.entries(M.input_ranges || {})) {
     const v = row[field];
     if (v == null) continue;
     if (v < bounds.min) {
@@ -342,20 +362,69 @@ function rangeProblems(row){
     } else if (v > bounds.max) {
       problems.push(`${FIELD_NAMES[field] || field} is above anything in the data (highest seen: ${fmt(bounds.max)}).`);
     } else if (v > bounds.p999) {
-      problems.push(`${FIELD_NAMES[field] || field} is larger than 99.9% of real transactions.`);
+      problems.push(`${FIELD_NAMES[field] || field} is larger than 99.9% of transactions in the data.`);
     }
   }
-
-  const sent = row.oldbalanceOrg - row.newbalanceOrig;
-  const received = row.newbalanceDest - row.oldbalanceDest;
-  const tol = Math.max(1, row.amount * 0.01);
-  if (row.newbalanceOrig > 0 && Math.abs(sent - row.amount) > tol) {
-    problems.push(`The sender's balance fell by ${fmt(sent)}, but the amount says ${fmt(row.amount)}.`);
-  }
-  if (row.oldbalanceDest > 0 && Math.abs(received - row.amount) > tol) {
-    problems.push(`The recipient's balance rose by ${fmt(received)}, but the amount says ${fmt(row.amount)}.`);
-  }
   return problems;
+}
+
+function balanceContext(row){
+  // Say how ordinary this shape is, with the measured prevalence and fraud rate.
+  const P = M.balance_patterns || {};
+  if (!P.rows) return [];
+  const base = P.base_rate || 0;
+  const notes = [];
+
+  const say = (key, text) => {
+    const p = P[key];
+    if (!p) return;
+    // "0.0% of transfers and cash-outs" tells a reader nothing. Below a twentieth of a
+    // percent, the raw count is the honest and more striking way to put it.
+    const how = p.share < 0.0005
+      ? `just ${fmt(p.rows)} of ${fmt(P.rows)} transfers and cash-outs`
+      : `${(p.share * 100).toFixed(1)}% of transfers and cash-outs`;
+    const lift = (p.fraud_rate && base) ? p.fraud_rate / base : null;
+    const risk = lift === null ? ""
+      : lift >= 10 ? ` Nearly ${(100 * p.fraud_rate).toFixed(0)}% of those were fraud.`
+      : lift >= 1.5 ? ` Those are about ${lift.toFixed(1)}x more likely to be fraud.`
+      : lift <= 0.67 ? " Those are less likely to be fraud than average."
+      : " That on its own says little about fraud.";
+    notes.push(`${text} — that describes ${how} in the training data.${risk}`);
+  };
+
+  // Prevalence figures are measured over TRANSFER and CASH_OUT. Quoting them beside a
+  // PAYMENT would be comparing a transaction against a population it is not part of.
+  const channel = (M.channels || {})[row.type];
+  if (channel && !channel.fitted) {
+    return [`The model was never fitted on ${row.type} transactions, and the data `
+      + `contains no fraud in that channel at all — the score below is not meaningful.`];
+  }
+
+  if (row.amount === 0) {
+    say("amount_zero", "The amount is zero");
+  }
+  if (row.amount > row.oldbalanceOrg) {
+    say("amount_over_sender_balance", "The amount is larger than the sender's balance");
+  }
+  if (row.oldbalanceOrg === 0) {
+    say("sender_started_empty", "The sender's account was already empty");
+  }
+  if (row.oldbalanceDest === 0 && row.newbalanceDest === 0) {
+    say("recipient_empty_throughout", "The recipient's balance is zero before and after");
+  } else if (Math.abs(row.oldbalanceDest + row.amount - row.newbalanceDest) > 0.01) {
+    if (row.newbalanceDest < row.oldbalanceDest) {
+      say("recipient_balance_fell", "The recipient's balance went down");
+    } else if (row.newbalanceDest > row.oldbalanceDest + row.amount) {
+      say("recipient_gained_more_than_sent", "The recipient gained more than was sent");
+    } else {
+      say("recipient_balance_mismatch", "The recipient's balance does not rise by the amount sent");
+    }
+  }
+  if (row.newbalanceOrig > row.oldbalanceOrg) {
+    say("sender_balance_rose", "The sender ended up with more than they started with");
+  }
+
+  return notes;
 }
 
 function fmt(n){
@@ -391,10 +460,18 @@ function render(){
   const warn = document.getElementById("rangewarn");
   warn.hidden = problems.length === 0;
   if (problems.length) {
-    warn.innerHTML = "<b>This transaction is unlike the data the model was trained on.</b>"
+    warn.innerHTML = "<b>This transaction is unlike anything the model was trained on.</b>"
       + "<span class=\"note\">The score below is still computed, but the model has no comparable"
       + " examples to draw on, so treat it as unreliable.</span><ul>"
       + problems.map(p => `<li>${p}</li>`).join("") + "</ul>";
+  }
+
+  const context = balanceContext(row);
+  const ctx = document.getElementById("context");
+  ctx.hidden = context.length === 0;
+  if (context.length) {
+    ctx.innerHTML = "<b>About this transaction</b><ul>"
+      + context.map(c => `<li>${c}</li>`).join("") + "</ul>";
   }
   const alerts = probability >= M.threshold;
   const pct = percentileOf(probability);
@@ -545,8 +622,17 @@ fetch("model.json")
   .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
   .then(data => {
     M = data;
-    document.getElementById("type").innerHTML =
-      M.type_categories.map(c => `<option value="${c}">${c}</option>`).join("");
+    // Offer every channel in the data, not only the two the encoder was fitted on.
+    // The other three exist and a visitor may want to try them; they are labelled
+    // because PaySim contains no fraud in them at all.
+    const channels = Object.keys(M.channels || {}).length
+      ? Object.keys(M.channels).sort((a, b) => M.channels[b].rows - M.channels[a].rows)
+      : M.type_categories;
+    document.getElementById("type").innerHTML = channels.map(c => {
+      const info = (M.channels || {})[c];
+      const tag = info && !info.fitted ? " — no fraud in the data" : "";
+      return `<option value="${c}">${c}${tag}</option>`;
+    }).join("");
     document.getElementById("app").hidden = false;
     for (const id of [...FIELDS, "type"]) {
       document.getElementById(id).addEventListener("change", () => onFieldEdit(id));

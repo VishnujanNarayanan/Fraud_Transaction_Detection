@@ -70,6 +70,12 @@ def export(artifacts: Path = ARTIFACTS, out: Path = DEFAULT_OUT) -> dict:
         "legitimate_quantiles": metrics.get("legitimate_quantiles", {}),
         # Lets the page warn when a typed transaction is unlike anything the model saw.
         "input_ranges": metrics.get("input_ranges", {}),
+        # Prevalence of each balance shape, so the page can report how ordinary an
+        # input is instead of calling normal data unreal.
+        "balance_patterns": metrics.get("balance_patterns", {}),
+        # Every channel in the data, not just the two the encoder was fitted on, so the
+        # demo can offer them and label the ones the model never learned.
+        "channels": metrics.get("channels", {}),
     }
 
     out.parent.mkdir(parents=True, exist_ok=True)
