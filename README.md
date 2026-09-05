@@ -135,6 +135,10 @@ Held-out 20% split: **1,272,524 transactions, 1,643 fraudulent** (0.129%).
 The engineered and all-features rows are byte-identical because both resolve to the same 17
 columns after preprocessing — the comparison as written does not isolate anything.
 
+**Average precision is 0.7437** — the honest summary, now computed by `src/evaluate.py` and
+published in the demo bundle. Set it against the 0.9947 ROC-AUC: the gap between the two is the
+whole argument for not leading with ROC-AUC on a dataset that is 99.87% easy negatives.
+
 **Recall is high and precision is very low.** At the default 0.50 threshold the model catches
 95.3% of fraud while roughly 1 alert in 27 is genuine. Whether that trade is acceptable depends
 on the cost of a missed fraud against the cost of an analyst reviewing a false alert.

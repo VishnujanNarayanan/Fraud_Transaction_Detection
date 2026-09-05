@@ -26,7 +26,12 @@ def load_artifacts(artifacts: Path = ARTIFACTS) -> tuple:
     """
     missing = [
         name
-        for name in ("fraud_preprocessor.pkl", "fraud_model.joblib", "feature_columns.json")
+        for name in (
+            "fraud_preprocessor.pkl",
+            "feature_scaler.joblib",
+            "fraud_model.joblib",
+            "feature_columns.json",
+        )
         if not (artifacts / name).exists()
     ]
     if missing:
@@ -35,6 +40,7 @@ def load_artifacts(artifacts: Path = ARTIFACTS) -> tuple:
             "Run `python -m src.train` first."
         )
     pre = joblib.load(artifacts / "fraud_preprocessor.pkl")
+    feature_scaler = joblib.load(artifacts / "feature_scaler.joblib")
     model = joblib.load(artifacts / "fraud_model.joblib")
     columns = json.loads((artifacts / "feature_columns.json").read_text())
 
@@ -42,7 +48,7 @@ def load_artifacts(artifacts: Path = ARTIFACTS) -> tuple:
     metrics_path = artifacts / "metrics.json"
     if metrics_path.exists():
         threshold = json.loads(metrics_path.read_text()).get("threshold", 0.5)
-    return pre, model, columns, threshold
+    return pre, feature_scaler, model, columns, threshold
 
 
 def score(
@@ -51,11 +57,11 @@ def score(
     threshold: float | None = None,
 ) -> pd.DataFrame:
     """Return the input frame with a fraud score and an alert flag appended."""
-    pre, model, columns, chosen = load_artifacts(artifacts)
+    pre, feature_scaler, model, columns, chosen = load_artifacts(artifacts)
     cutoff = chosen if threshold is None else threshold
 
     features = pre.transform(frame.drop(columns=["isFraud"], errors="ignore"))
-    scores = model.predict_proba(features[columns])[:, 1]
+    scores = model.predict_proba(feature_scaler.transform(features[columns]))[:, 1]
 
     out = frame.copy()
     out["fraud_score"] = scores
