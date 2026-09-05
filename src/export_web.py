@@ -68,6 +68,8 @@ def export(artifacts: Path = ARTIFACTS, out: Path = DEFAULT_OUT) -> dict:
         # Lets the page say where a score sits among legitimate transactions, rather
         # than showing a raw score whose scale is an artefact of the class weighting.
         "legitimate_quantiles": metrics.get("legitimate_quantiles", {}),
+        # Lets the page warn when a typed transaction is unlike anything the model saw.
+        "input_ranges": metrics.get("input_ranges", {}),
     }
 
     out.parent.mkdir(parents=True, exist_ok=True)

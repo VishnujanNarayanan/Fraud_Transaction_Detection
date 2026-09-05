@@ -131,3 +131,19 @@ def test_bundle_reports_performance_at_the_real_threshold(bundle):
     assert at["precision"] > bundle["metrics"]["precision"], (
         "precision at the chosen threshold should beat precision at 0.50"
     )
+
+
+def test_bundle_carries_input_ranges_for_every_typed_field(bundle):
+    """Each field the demo exposes needs bounds, or its warning silently never fires."""
+    ranges = bundle.get("input_ranges") or {}
+    for field in (
+        "step",
+        "amount",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "oldbalanceDest",
+        "newbalanceDest",
+    ):
+        assert field in ranges, f"no published range for {field}"
+        bounds = ranges[field]
+        assert bounds["min"] <= bounds["p999"] <= bounds["max"]

@@ -19,7 +19,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-from src.evaluate import evaluate, legitimate_quantiles, pick_threshold
+from src.evaluate import evaluate, input_ranges, legitimate_quantiles, pick_threshold
 from src.preprocessor import REDUCED_DROP, FraudPreprocessor
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,6 +83,7 @@ def train(
     if frame is None:
         frame = load_transactions(csv_path)
 
+    ranges = input_ranges(frame)
     X = frame.drop(columns=[TARGET])
     y = frame[TARGET]
     X_train, X_test, y_train, y_test = train_test_split(
@@ -132,6 +133,7 @@ def train(
     # at the chosen threshold it is roughly 0.65 for three quarters of the recall.
     metrics["at_threshold"] = evaluate(y_test, scores, threshold=metrics["threshold"])
     metrics["legitimate_quantiles"] = legitimate_quantiles(y_test, scores)
+    metrics["input_ranges"] = ranges
     metrics["variant"] = "reduced" if reduced else "engineered"
 
     artifacts.mkdir(parents=True, exist_ok=True)

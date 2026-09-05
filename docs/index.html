@@ -53,10 +53,13 @@
   .scroll{overflow-x:auto}
   .note{color:var(--muted);font-size:.87rem}
   .reasons{display:flex;flex-direction:column;gap:10px}
-  .reason{display:grid;grid-template-columns:1fr 84px;gap:12px;align-items:center;
-          padding:11px 14px;border:1px solid var(--line);border-radius:9px}
+  .reason{display:grid;grid-template-columns:1fr 84px;gap:14px;align-items:start;
+          padding:14px 16px;border:1px solid var(--line);border-radius:9px}
+  .reason .weight{margin-top:7px}
   .reason b{font-weight:600;font-size:.94rem}
-  .reason .dir{font-size:.78rem;color:var(--muted);display:block;margin-top:2px}
+  .reason .dir{font-size:.82rem;color:var(--muted);display:block;margin-top:4px;line-height:1.45}
+  .reason .verdictline{font-size:.78rem;margin-top:5px}
+  .up .verdictline{color:var(--warn)} .down .verdictline{color:var(--safe)}
   .reason .weight{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
   .reason .weight i{display:block;height:100%}
   .up .weight i{background:var(--warn)} .down .weight i{background:var(--safe)}
@@ -64,6 +67,17 @@
   .down b::before{content:"▼ ";color:var(--safe);font-size:.8em}
   .perfrow{padding:13px 0;border-bottom:1px solid var(--line)}
   .perfrow:last-child{border-bottom:0}
+  .actions{display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap}
+  .actions button{padding:10px 22px;border:0;border-radius:8px;background:var(--accent);
+                  color:#fff;font-size:.95rem;font-weight:600;cursor:pointer}
+  .actions button:hover{filter:brightness(1.08)}
+  .actions button:disabled{opacity:.45;cursor:default;filter:none}
+  .verdict.stale{opacity:.4}
+  input.derived{border-color:var(--accent)}
+  .rangewarn{margin-top:14px;padding:12px 15px;border:1px solid var(--warn);
+             border-radius:9px;font-size:.88rem}
+  .rangewarn b{display:block;margin-bottom:4px}
+  .rangewarn ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
   .perfrow strong{display:block;font-size:.95rem;margin-bottom:3px}
   .perfrow span{color:var(--muted);font-size:.88rem}
   footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);
@@ -127,18 +141,24 @@
         </div>
       </div>
 
+      <div class="actions">
+        <button type="button" id="predict">Predict</button>
+        <span class="note" id="hint"></span>
+      </div>
+
       <div id="verdict" class="verdict">
         <span class="score" id="score">—</span>
         <p id="explain"></p>
       </div>
       <div class="bar"><i id="bar" style="width:0%"></i></div>
       <p class="note" id="rawnote"></p>
+      <div id="rangewarn" class="rangewarn" hidden></div>
     </div>
 
     <h2>What drove this score</h2>
     <p class="note">
-      The five things that moved this transaction most, strongest first. Bar length is
-      relative weight within this transaction — not a percentage.
+      The five things that moved this transaction most, strongest first. The bar shows
+      how much each one mattered relative to the others — it is not a percentage.
     </p>
     <div id="contrib" class="reasons"></div>
 
@@ -199,9 +219,41 @@ const FEATURE_LABELS = {
   type_CASH_IN: "Cash paid in"
 };
 
+// A label alone still asks the reader to work out why it matters. Each factor gets a
+// sentence saying what it is and why the model cares.
+const FEATURE_WHY = {
+  diff_orig: "How much the sender's balance dropped. Fraud in this data drains an account in a single move.",
+  diff_dest: "How much the recipient's balance rose. In a genuine transfer it rises by the amount sent.",
+  suspicious_flag: "Money left the sender but the recipient's balance never moved. The strongest warning sign in the data.",
+  type_TRANSFER: "The money was sent as a transfer. Fraud here almost always begins with one.",
+  type_CASH_OUT: "The money was taken out as cash. Fraud here almost always ends this way.",
+  type_PAYMENT: "An ordinary payment to a merchant. Fraud never appears in this channel.",
+  type_DEBIT: "A direct debit. Fraud never appears in this channel.",
+  type_CASH_IN: "Cash paid into the account. Fraud never appears in this channel.",
+  always_nonfraud_type: "Whether the channel is one fraud never uses at all.",
+  log_amount: "The size of the transaction, compressed so huge and tiny transfers can be compared fairly.",
+  amount: "The raw transaction amount.",
+  oldbalanceOrg: "What the sender held before the transaction.",
+  newbalanceOrig: "What the sender held afterwards.",
+  oldbalanceDest: "What the recipient held before the transaction.",
+  newbalanceDest: "What the recipient held afterwards.",
+  step: "When in the simulated month it happened.",
+  hour: "The hour of the day it happened.",
+  hour_sin: "The time of day, encoded so 11pm and midnight count as neighbours.",
+  hour_cos: "The time of day, encoded so 11pm and midnight count as neighbours.",
+  day_of_week: "Where in the week the transaction fell.",
+  error_flag: "Whether any balance was impossible. This never happens in the data."
+};
+
 function label(name){
   return FEATURE_LABELS[name] || name.replace(/^type_/, "Channel: ").replace(/_/g, " ");
 }
+
+function why(name){
+  return FEATURE_WHY[name] || "";
+}
+
+const RANK_WORDS = ["strongest", "second strongest", "third", "fourth", "fifth"];
 
 function sigmoid(z){
   // Branch the same way the Python does, so neither side overflows.
@@ -257,6 +309,59 @@ function score(row){
   return {probability: sigmoid(z), contributions};
 }
 
+// A real transfer keeps the books straight: what leaves the sender is what the
+// recipient receives. Editing one figure therefore implies others, and leaving them
+// inconsistent describes a transaction that could not have happened.
+const DERIVED = {
+  amount:         r => ({newbalanceOrig: Math.max(r.oldbalanceOrg - r.amount, 0),
+                         newbalanceDest: r.oldbalanceDest + r.amount}),
+  oldbalanceOrg:  r => ({newbalanceOrig: Math.max(r.oldbalanceOrg - r.amount, 0)}),
+  oldbalanceDest: r => ({newbalanceDest: r.oldbalanceDest + r.amount}),
+  newbalanceOrig: r => ({amount: Math.max(r.oldbalanceOrg - r.newbalanceOrig, 0),
+                         newbalanceDest: r.oldbalanceDest + Math.max(r.oldbalanceOrg - r.newbalanceOrig, 0)}),
+  newbalanceDest: r => ({amount: Math.max(r.newbalanceDest - r.oldbalanceDest, 0),
+                         newbalanceOrig: Math.max(r.oldbalanceOrg - Math.max(r.newbalanceDest - r.oldbalanceDest, 0), 0)})
+};
+
+const FIELD_NAMES = {
+  step: "hour of simulation", amount: "amount",
+  oldbalanceOrg: "sender balance before", newbalanceOrig: "sender balance after",
+  oldbalanceDest: "recipient balance before", newbalanceDest: "recipient balance after"
+};
+
+function rangeProblems(row){
+  // Two different kinds of unreal input, both worth saying out loud.
+  const problems = [];
+  const R = M.input_ranges || {};
+
+  for (const [field, bounds] of Object.entries(R)) {
+    const v = row[field];
+    if (v == null) continue;
+    if (v < bounds.min) {
+      problems.push(`${FIELD_NAMES[field] || field} is below anything in the data (lowest seen: ${fmt(bounds.min)}).`);
+    } else if (v > bounds.max) {
+      problems.push(`${FIELD_NAMES[field] || field} is above anything in the data (highest seen: ${fmt(bounds.max)}).`);
+    } else if (v > bounds.p999) {
+      problems.push(`${FIELD_NAMES[field] || field} is larger than 99.9% of real transactions.`);
+    }
+  }
+
+  const sent = row.oldbalanceOrg - row.newbalanceOrig;
+  const received = row.newbalanceDest - row.oldbalanceDest;
+  const tol = Math.max(1, row.amount * 0.01);
+  if (row.newbalanceOrig > 0 && Math.abs(sent - row.amount) > tol) {
+    problems.push(`The sender's balance fell by ${fmt(sent)}, but the amount says ${fmt(row.amount)}.`);
+  }
+  if (row.oldbalanceDest > 0 && Math.abs(received - row.amount) > tol) {
+    problems.push(`The recipient's balance rose by ${fmt(received)}, but the amount says ${fmt(row.amount)}.`);
+  }
+  return problems;
+}
+
+function fmt(n){
+  return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
+}
+
 function percentileOf(probability){
   // Where this score sits among LEGITIMATE transactions in the held-out data.
   // class_weight="balanced" upweights fraud roughly 775:1, so the raw score is a risk
@@ -279,7 +384,18 @@ function readForm(){
 }
 
 function render(){
-  const {probability, contributions} = score(readForm());
+  const row = readForm();
+  const {probability, contributions} = score(row);
+
+  const problems = rangeProblems(row);
+  const warn = document.getElementById("rangewarn");
+  warn.hidden = problems.length === 0;
+  if (problems.length) {
+    warn.innerHTML = "<b>This transaction is unlike the data the model was trained on.</b>"
+      + "<span class=\"note\">The score below is still computed, but the model has no comparable"
+      + " examples to draw on, so treat it as unreliable.</span><ul>"
+      + problems.map(p => `<li>${p}</li>`).join("") + "</ul>";
+  }
   const alerts = probability >= M.threshold;
   const pct = percentileOf(probability);
 
@@ -315,22 +431,76 @@ function render(){
 
   const top = contributions.slice(0, 5);
   const widest = Math.max(...top.map(c => Math.abs(c.contribution))) || 1;
-  document.getElementById("contrib").innerHTML = top.map(c => {
+  document.getElementById("contrib").innerHTML = top.map((c, i) => {
     const up = c.contribution >= 0;
     const width = (Math.abs(c.contribution) / widest) * 100;
     return `<div class="reason ${up ? "up" : "down"}">
-      <span><b>${label(c.name)}</b>
-        <span class="dir">${up ? "raises" : "lowers"} the risk score</span></span>
+      <span>
+        <b>${label(c.name)}</b>
+        <span class="dir">${why(c.name)}</span>
+        <span class="dir verdictline">${up ? "Pushes the score up" : "Pulls the score down"} — ${RANK_WORDS[i]} factor here.</span>
+      </span>
       <span class="weight"><i style="width:${width}%"></i></span>
     </div>`;
   }).join("");
+}
+
+// --- interaction state -------------------------------------------------------
+// Scoring is not live. Editing one field once pulls the dependent balances along
+// with it, so the transaction stays arithmetically real; after that first edit the
+// page stops interfering, because from then on you are deliberately overriding it.
+// Predict scores what is on screen and re-arms the whole cycle.
+let autoAdjustArmed = true;
+let stale = true;
+
+function setStale(isStale){
+  stale = isStale;
+  document.getElementById("verdict").classList.toggle("stale", isStale);
+  document.getElementById("predict").disabled = !isStale;
+  document.getElementById("hint").textContent = isStale
+    ? (autoAdjustArmed
+        ? "Edit any field — the related balances follow. Then press Predict."
+        : "Further edits are left exactly as you type them. Press Predict when ready.")
+    : "Scored. Edit a field to start again.";
+}
+
+function clearDerivedMarks(){
+  for (const id of FIELDS) document.getElementById(id).classList.remove("derived");
+}
+
+function onFieldEdit(edited){
+  if (autoAdjustArmed && DERIVED[edited]) {
+    const row = readForm();
+    const updates = DERIVED[edited](row);
+    clearDerivedMarks();
+    for (const [field, value] of Object.entries(updates)) {
+      const input = document.getElementById(field);
+      if (input && document.activeElement !== input) {
+        input.value = Math.round(value * 100) / 100;
+        input.classList.add("derived");   // highlight what the page filled in
+      }
+    }
+  }
+  // Whether or not anything was derived, the one free adjustment is now spent.
+  autoAdjustArmed = false;
+  setStale(true);
+}
+
+function predict(){
+  render();
+  clearDerivedMarks();
+  autoAdjustArmed = true;    // the cycle starts over
+  setStale(false);
 }
 
 function applyPreset(name){
   const preset = PRESETS[name];
   document.getElementById("type").value = preset.type;
   for (const id of FIELDS) document.getElementById(id).value = preset[id];
+  clearDerivedMarks();
+  autoAdjustArmed = true;    // a preset is a clean slate, like pressing Predict
   render();
+  setStale(false);
 }
 
 function renderMetrics(){
@@ -379,8 +549,9 @@ fetch("model.json")
       M.type_categories.map(c => `<option value="${c}">${c}</option>`).join("");
     document.getElementById("app").hidden = false;
     for (const id of [...FIELDS, "type"]) {
-      document.getElementById(id).addEventListener("input", render);
+      document.getElementById(id).addEventListener("change", () => onFieldEdit(id));
     }
+    document.getElementById("predict").addEventListener("click", predict);
     document.querySelectorAll("[data-preset]").forEach(button => {
       button.addEventListener("click", () => applyPreset(button.dataset.preset));
     });
